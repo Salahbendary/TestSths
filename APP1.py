@@ -1,5 +1,6 @@
 """
 Antenna Downtilt Calculator — Streamlit
+Elevation: SRTM local cache (srtm.py) with Open-Meteo as fallback
 """
 
 import streamlit as st
@@ -9,6 +10,58 @@ import plotly.graph_objects as go
 import folium
 from streamlit_folium import st_folium
 import zipfile, io, math
+import time
+
+# ── SRTM local elevation (downloaded once, cached on disk) ──────────────────
+try:
+    import srtm as _srtm_lib
+    _SRTM_AVAILABLE = True
+except ImportError:
+    _SRTM_AVAILABLE = False
+
+@st.cache_resource(show_spinner=False)
+def _load_srtm():
+    """Load SRTM data object once per Streamlit session.
+    Tiles are downloaded on first access and cached in ~/.srtm/"""
+    if not _SRTM_AVAILABLE:
+        return None
+    return _srtm_lib.get_data()
+
+def _elev_srtm(lats, lons):
+    """Query elevation for lists of lat/lon using local SRTM tiles.
+    Returns list of floats (NaN → 0.0 fallback).
+    Tiles auto-download on first call (~90 KB each), then stay cached.
+    """
+    data = _load_srtm()
+    if data is None:
+        raise RuntimeError("srtm library not available")
+    result = []
+    for lat, lon in zip(lats, lons):
+        e = data.get_elevation(lat, lon)
+        result.append(float(e) if e is not None else 0.0)
+    return result
+
+# ── Open-Meteo (cloud API, rate-limited — used as fallback only) ─────────────
+def _elev_open_meteo(lats, lons):
+    url = (
+        "https://api.open-meteo.com/v1/elevation"
+        f"?latitude={','.join(str(x) for x in lats)}"
+        f"&longitude={','.join(str(x) for x in lons)}"
+    )
+    r = requests.get(url, timeout=15)
+    r.raise_for_status()
+    return r.json()["elevation"]
+
+def _elev_open_elevation(lats, lons):
+    """Second cloud fallback — open-elevation.com"""
+    locations = [{"latitude": la, "longitude": lo}
+                 for la, lo in zip(lats, lons)]
+    r = requests.post(
+        "https://api.open-elevation.com/api/v1/lookup",
+        json={"locations": locations}, timeout=20,
+    )
+    r.raise_for_status()
+    return [pt["elevation"] for pt in r.json()["results"]]
 
 # ─────────────────────────────────────────────────────
 st.set_page_config(
@@ -94,6 +147,13 @@ section[data-testid="stSidebar"] .block-container { padding-top:1.4rem; }
   padding:9px 14px; margin-top:8px; font-size:0.74rem; color:#94a3b8;
   display:flex; align-items:center; gap:7px; }
 
+/* SRTM source badge */
+.src-badge { display:inline-block; font-size:0.64rem; font-weight:600;
+  font-family:'JetBrains Mono',monospace; padding:2px 8px; border-radius:4px;
+  margin-left:6px; }
+.src-local  { background:#dcfce7; color:#15803d; }
+.src-cloud  { background:#fef3c7; color:#92400e; }
+
 #MainMenu, footer { visibility:hidden; }
 .block-container { padding-top:1.6rem; }
 label { color:#64748b !important; font-size:0.82rem !important; font-weight:500 !important; }
@@ -118,7 +178,7 @@ def flat_geom(h, dt, vbw):
     main_d = h / math.tan(d)
     near_d = h / math.tan(d + half)
     fa = max(0.0002, d - half)
-    return main_d, h / math.tan(fa), near_d  # returns main, far, near
+    return main_d, h / math.tan(fa), near_d
 
 def flat_geom_full(h, dt, vbw):
     d, half = math.radians(dt), math.radians(vbw/2)
@@ -149,24 +209,69 @@ def gc_dest(lat, lon, bearing, dist_m):
     return math.degrees(la2), math.degrees(lo2)
 
 # ─────────────────────────────────────────────────────
-# DEM FETCH
+# ELEVATION FETCH  — SRTM-first, cloud fallback
 # ─────────────────────────────────────────────────────
+
 @st.cache_data(show_spinner=False)
 def fetch_dem(lat, lon, az, dist_m, n=100):
+    """
+    Fetch elevation profile along a great-circle path.
+
+    Priority:
+      1. srtm.py  — downloads SRTM3 tiles (~90 KB each) on first call,
+                    then reads from local disk cache (~/.srtm/).
+                    Works offline after first download. No rate limits.
+      2. Open-Meteo elevation API (cloud, 600 req/min free tier)
+      3. Open-Elevation API (cloud, free, slower)
+
+    Returns (distances_m array, elevations_m array, source_label)
+    """
     lats, lons = [], []
     for i in range(n):
-        p = gc_dest(lat, lon, az, i/(n-1)*dist_m)
-        lats.append(f"{p[0]:.7f}"); lons.append(f"{p[1]:.7f}")
-    url = f"https://api.open-meteo.com/v1/elevation?latitude={','.join(lats)}&longitude={','.join(lons)}"
-    r = requests.get(url, timeout=15); r.raise_for_status()
-    data = r.json()
-    if "elevation" not in data or not data["elevation"]:
-        raise ValueError("No elevation data")
-    elev = np.array(data["elevation"], dtype=float)
-    return np.linspace(0, dist_m, n), elev
+        p = gc_dest(lat, lon, az, i / (n - 1) * dist_m)
+        lats.append(round(p[0], 7))
+        lons.append(round(p[1], 7))
+
+    # ── 1. Try SRTM local cache (best for Egypt — offline, no limits) ──────
+    if _SRTM_AVAILABLE:
+        try:
+            elevs = _elev_srtm(lats, lons)
+            return np.linspace(0, dist_m, n), np.array(elevs, dtype=float), "SRTM (local)"
+        except Exception as e:
+            pass  # fall through to cloud
+
+    # ── 2. Open-Meteo cloud API in safe chunks ──────────────────────────────
+    CHUNK = 25
+    elevs = []
+    source = "Open-Meteo (cloud)"
+    for start in range(0, n, CHUNK):
+        lat_c = lats[start: start + CHUNK]
+        lon_c = lons[start: start + CHUNK]
+        try:
+            elevs.extend(_elev_open_meteo(lat_c, lon_c))
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 429:
+                # Rate limited — wait and retry once with longer delay
+                time.sleep(2.0)
+                try:
+                    elevs.extend(_elev_open_meteo(lat_c, lon_c))
+                except Exception:
+                    # ── 3. Open-Elevation fallback ────────────────────────
+                    elevs.extend(_elev_open_elevation(lat_c, lon_c))
+                    source = "Open-Elevation (cloud)"
+            else:
+                raise
+        except Exception:
+            elevs.extend(_elev_open_elevation(lat_c, lon_c))
+            source = "Open-Elevation (cloud)"
+        if start + CHUNK < n:
+            time.sleep(0.15)
+
+    return np.linspace(0, dist_m, n), np.array(elevs, dtype=float), source
+
 
 # ─────────────────────────────────────────────────────
-# PLOTLY CHART  — matches rfuniverse style exactly
+# PLOTLY CHART
 # ─────────────────────────────────────────────────────
 def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
                 dem_d, dem_elev, slider_d, units):
@@ -191,34 +296,11 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
     y_min = float(np.min(terrain_y)) - 20
     y_max = site_elev + h_m + 50
 
-    # ── Distance-zone classification ──────────────────────────────────────────
-    # Blue  : 0       → near_d  (approaching footprint)
-    # Yellow: near_d  → far_d   (footprint zone)
-    # Blue  : far_d   → end     (beyond footprint — same blue as before)
-    zone_yellow = (xs >= near_d) & (xs <= far_d)
-    zone_blue   = ~zone_yellow   # everything outside footprint is blue
+    in_foot   = (xs >= near_d) & (xs <= far_d)
+    main_above = main_ray >= terrain_y
+    strong    = main_above & ~in_foot
+    shadow    = ~main_above & ~in_foot
 
-    in_foot = zone_yellow   # keep for terrain line colouring below
-
-    # ── LOS shadow detection for terrain line colour ───────────────────────
-    ant_z = site_elev + h_m
-    def compute_los_clear(distances, terrain):
-        n = len(distances)
-        los_clear = np.ones(n, dtype=bool)
-        for i in range(1, n):
-            d_target = distances[i]
-            if d_target <= 0:
-                continue
-            los_line = ant_z + (terrain[i] - ant_z) * (distances[:i] / d_target)
-            if np.any(terrain[:i] > los_line + 0.1):
-                los_clear[i] = False
-        return los_clear
-
-    los_clear  = compute_los_clear(xs, terrain_y) if has_dem else np.ones(len(xs), dtype=bool)
-    strong     = los_clear  & ~in_foot
-    shadow     = ~los_clear & ~in_foot
-
-    # Terrain line segments
     def make_seg(mask):
         return np.where(mask, terrain_y, np.nan)
 
@@ -226,16 +308,16 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
     seg_red    = make_seg(shadow)
     seg_orange = make_seg(in_foot)
 
-    # ── Zone band arrays (fill to y_max) ──
-    band_blue   = np.where(zone_blue,   y_max, np.nan)
-    band_yellow = np.where(zone_yellow, y_max, np.nan)
+    band_strong = np.where(strong,  y_max, np.nan)
+    band_foot   = np.where(in_foot, y_max, np.nan)
+    band_shadow = np.where(shadow,  y_max, np.nan)
 
     fig = go.Figure()
 
-    # ── Background vertical zone bands ────────────────────────────────────
     for band_y, col, name in [
-        (band_blue,   'rgba(186,230,253,0.40)', '_bblue'),
-        (band_yellow, 'rgba(254,243,199,0.50)', '_byellow'),
+        (band_strong, 'rgba(187,247,208,0.20)', '_bstrong'),
+        (band_foot,   'rgba(254,215,170,0.28)', '_bfoot'),
+        (band_shadow, 'rgba(254,202,202,0.25)', '_bshadow'),
     ]:
         fig.add_trace(go.Scatter(
             x=xs, y=band_y,
@@ -245,17 +327,15 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
             connectgaps=False, hoverinfo='skip'
         ))
 
-    # ── Terrain base fill (only under yellow zone — blue zone handles the rest) ──
     fig.add_trace(go.Scatter(
         x=xs, y=terrain_y,
         fill='tozeroy',
-        fillcolor='rgba(186,230,253,0.00)',
+        fillcolor='rgba(186,230,253,0.40)',
         line=dict(color='#94a3b8', width=1.2),
         name='Terrain', showlegend=False,
         hovertemplate='Dist: %{x:.0f} m<br>Elev: %{y:.1f} m MSL<extra></extra>'
     ))
 
-    # ── Coloured terrain line segments ──
     for seg_y, col, lw, leg in [
         (seg_green,  '#16a34a', 2.5, 'Strong signal'),
         (seg_red,    '#dc2626', 2.5, 'Shadowed'),
@@ -268,7 +348,6 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
             connectgaps=False, hoverinfo='skip'
         ))
 
-    # ── Main lobe ray (solid green) ──
     fig.add_trace(go.Scatter(
         x=xs, y=main_ray,
         line=dict(color='#16a34a', width=2),
@@ -276,7 +355,21 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         hovertemplate='Main lobe: %{y:.1f} m<extra></extra>'
     ))
 
-    # ── Footprint lobe limits (dashed light blue) ──
+    fig.add_trace(go.Scatter(
+        x=xs, y=far_ray,
+        line=dict(color='rgba(125,211,252,0)', width=0),
+        showlegend=False, name='_farlimit_fill',
+        hoverinfo='skip'
+    ))
+    fig.add_trace(go.Scatter(
+        x=xs, y=near_ray,
+        fill='tonexty',
+        fillcolor='rgba(125,211,252,0.25)',
+        line=dict(color='rgba(125,211,252,0)', width=0),
+        showlegend=False, name='_nearfill',
+        hoverinfo='skip'
+    ))
+
     fig.add_trace(go.Scatter(
         x=xs, y=near_ray,
         line=dict(color='#7dd3fc', width=1.5, dash='dash'),
@@ -290,7 +383,6 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         hovertemplate='Far limit: %{y:.1f} m<extra></extra>'
     ))
 
-    # ── Slider vertical line (red dashed) ──
     sl_elev = elev_at(slider_d)
     fig.add_trace(go.Scatter(
         x=[slider_d, slider_d],
@@ -300,7 +392,6 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         hovertemplate=f'Selected: {fmt_d(slider_d, units)}<br>Terrain: {sl_elev:.1f} m<extra></extra>'
     ))
 
-    # ── Antenna marker ──
     ant_elev = site_elev + h_m
     fig.add_trace(go.Scatter(
         x=[0], y=[ant_elev],
@@ -314,7 +405,6 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         hovertemplate=f'Antenna<br>AGL: {h_m:.0f} m<br>MSL: {ant_elev:.1f} m<extra></extra>'
     ))
 
-    # ── Main lobe hit marker ──
     hit_elev = elev_at(main_d)
     fig.add_trace(go.Scatter(
         x=[main_d], y=[hit_elev],
@@ -328,14 +418,12 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         hovertemplate=f'Main hit: {fmt_d(main_d, units)}<extra></extra>'
     ))
 
-    # ── Antenna vertical marker line ──
     fig.add_trace(go.Scatter(
         x=[0, 0], y=[site_elev, ant_elev],
         line=dict(color='#0ea5e9', width=3),
         showlegend=False, name='_antline', hoverinfo='skip'
     ))
 
-    # Layout — LIGHT background like rfuniverse
     fig.update_layout(
         plot_bgcolor='#ffffff',
         paper_bgcolor='#ffffff',
@@ -363,7 +451,6 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         hovermode='x unified',
         hoverlabel=dict(bgcolor='#fff', bordercolor='#dde3ec',
                         font=dict(family='JetBrains Mono', size=11, color='#1e293b')),
-        # Top annotation
         annotations=[
             dict(x=0.02, y=1.04, xref='paper', yref='paper', showarrow=False,
                  text=f'Main hit: {fmt_d(main_d, units)}',
@@ -372,12 +459,13 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
                  text=f'Downtilt {dt_deg} deg | V-BW {vbw_deg} deg',
                  font=dict(size=10, color='#64748b', family='Inter'), xanchor='center'),
             dict(x=1.0, y=1.04, xref='paper', yref='paper', showarrow=False,
-                 text='Blue=approaching/beyond, yellow=footprint | red=shadowed by terrain',
+                 text='Green=strong, yellow=weak, red=shadowed by terrain',
                  font=dict(size=10, color='#64748b', family='Inter'), xanchor='right'),
         ]
     )
 
     return fig
+
 
 # ─────────────────────────────────────────────────────
 # FOLIUM MAP
@@ -404,8 +492,6 @@ def build_map(lat, lon, az, hbw, main_d, near_d, far_d, dem_d, dist_m):
     folium.CircleMarker(hit, radius=8, color='#0d9488', fill=True,
         fill_color='#0d9488', fill_opacity=1, weight=2,
         popup=folium.Popup(f'<b>Main Lobe Hit</b><br>{fmt_d(main_d,"Metric (m, km)")} from site')).add_to(m)
-    # Clicking anywhere on the map shows a popup with lat/lon
-    # and returns the coordinates to Streamlit via st_folium
     m.add_child(folium.LatLngPopup())
     return m
 
@@ -442,22 +528,30 @@ def build_kmz(lat, lon, az, hbw, main_d, near_d, far_d):
     return buf.getvalue()
 
 # ─────────────────────────────────────────────────────
-# SESSION STATE  — store ONLY raw DEM data, nothing derived
+# SESSION STATE
 # ─────────────────────────────────────────────────────
 for k, v in [('dem_d', None), ('dem_elev', None),
-             ('dem_status', None), ('dem_msg', '')]:
+             ('dem_status', None), ('dem_msg', ''), ('dem_source', '')]:
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ─────────────────────────────────────────────────────
 # HEADER
 # ─────────────────────────────────────────────────────
-st.markdown("""
+
+# Show SRTM availability banner once
+if _SRTM_AVAILABLE:
+    _srtm_badge = '<span class="src-badge src-local">⚡ SRTM local cache active — no API calls needed</span>'
+else:
+    _srtm_badge = '<span class="src-badge src-cloud">☁ srtm library not found — pip install srtm.py</span>'
+
+st.markdown(f"""
 <div style="border-bottom:1px solid #dde3ec;padding-bottom:14px;margin-bottom:20px;">
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:3px;">
     <div style="width:30px;height:30px;background:#0ea5e9;border-radius:7px;display:flex;
                 align-items:center;justify-content:center;font-size:15px;color:#fff;">📡</div>
     <span style="font-size:1.2rem;font-weight:700;color:#1e293b;">Antenna Downtilt Calculator</span>
+    {_srtm_badge}
   </div>
   <div style="padding-left:40px;font-size:0.8rem;color:#64748b;">
     Calculate main lobe impact and ground footprint with an interactive RF visual.
@@ -497,38 +591,55 @@ with st.sidebar:
         site_lon = st.number_input("Site Longitude (deg)",  value=31.0719953, format="%.7f", step=0.0001)
         az_deg   = st.number_input("Antenna Azimuth (deg)", min_value=0.0, max_value=360.0, value=80.0, step=1.0)
 
+        # Show which source will be used
+        if _SRTM_AVAILABLE:
+            st.markdown(
+                "<div style='font-size:0.68rem;color:#15803d;background:#dcfce7;"
+                "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
+                "⚡ Will use local SRTM tiles (offline-capable)</div>",
+                unsafe_allow_html=True)
+        else:
+            st.markdown(
+                "<div style='font-size:0.68rem;color:#92400e;background:#fef3c7;"
+                "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
+                "☁ Will use Open-Meteo API (install srtm.py to go offline)</div>",
+                unsafe_allow_html=True)
+
         if st.button("↻ Fetch Elevation Profile", type="primary", use_container_width=True):
-            with st.spinner("Fetching elevation from Open-Meteo DEM…"):
+            src_label = "SRTM (local)" if _SRTM_AVAILABLE else "cloud API"
+            with st.spinner(f"Loading elevation via {src_label}…"):
                 try:
-                    d_arr, e_arr = fetch_dem(site_lat, site_lon, az_deg, dist_m, n=100)
-                    # ── Store ONLY raw elevation data. All stats computed live below. ──
+                    d_arr, e_arr, source = fetch_dem(site_lat, site_lon, az_deg, dist_m, n=100)
                     st.session_state.dem_d      = d_arr
                     st.session_state.dem_elev   = e_arr
                     st.session_state.dem_status = "ok"
-                    st.session_state.dem_msg    = f"Elevation profile loaded — {len(d_arr)} DEM samples. Source: Open-Meteo DEM."
+                    st.session_state.dem_source = source
+                    st.session_state.dem_msg    = (
+                        f"Elevation loaded — {len(d_arr)} samples · Source: {source}")
                     st.rerun()
                 except Exception as ex:
                     st.session_state.dem_status = "error"
                     st.session_state.dem_msg    = f"Fetch failed: {ex}"
                     st.session_state.dem_d      = None
                     st.session_state.dem_elev   = None
+                    st.session_state.dem_source = ""
                     st.rerun()
     else:
         site_lat, site_lon, az_deg = 30.0028686, 31.0719953, 80.0
-        # Clear DEM when terrain toggled off
-        st.session_state.dem_d     = None
-        st.session_state.dem_elev  = None
+        st.session_state.dem_d      = None
+        st.session_state.dem_elev   = None
         st.session_state.dem_status = None
-        st.session_state.dem_msg   = ""
+        st.session_state.dem_msg    = ""
+        st.session_state.dem_source = ""
 
     st.divider()
     if st.button("↺ Reset", use_container_width=True):
-        for k in ['dem_d', 'dem_elev', 'dem_status', 'dem_msg']:
-            st.session_state[k] = "" if k == "dem_msg" else None
+        for k in ['dem_d', 'dem_elev', 'dem_status', 'dem_msg', 'dem_source']:
+            st.session_state[k] = "" if k in ("dem_msg", "dem_source") else None
         st.rerun()
 
 # ─────────────────────────────────────────────────────
-# COMPUTE GEOMETRY  (runs on every rerender with current inputs)
+# COMPUTE GEOMETRY
 # ─────────────────────────────────────────────────────
 dem_d    = st.session_state.dem_d
 dem_elev = st.session_state.dem_elev
@@ -549,13 +660,11 @@ else:
     note   = "Flat-earth model"
 
 # ─────────────────────────────────────────────────────
-# COMPUTE TERRAIN STATS LIVE  (recalculates on every input change)
-# Uses stored dem_d / dem_elev  +  current h_m, dt_deg
+# LIVE TERRAIN STATS
 # ─────────────────────────────────────────────────────
 live_stats = None
 if has_dem and terrain_on:
     se_stats  = float(dem_elev[0])
-    # Ray height at each DEM sample using CURRENT h_m and dt_deg
     ray_z     = se_stats + h_m - dem_d * np.tan(np.radians(dt_deg))
     above_arr = ray_z >= dem_elev
     n_above   = int(np.sum(above_arr))
@@ -571,16 +680,24 @@ if has_dem and terrain_on:
     )
 
 # ─────────────────────────────────────────────────────
-# STATUS BAR  (also live — shows current stats in message)
+# STATUS BAR
 # ─────────────────────────────────────────────────────
-s = st.session_state.dem_status
+s      = st.session_state.dem_status
+src    = st.session_state.dem_source
+if src == "SRTM (local)":
+    src_html = '<span class="src-badge src-local">SRTM local</span>'
+elif src:
+    src_html = '<span class="src-badge src-cloud">cloud API</span>'
+else:
+    src_html = ''
+
 if s == "ok" and live_stats:
-    obs_str = fmt_d(live_stats['first_obs'], units) if live_stats['first_obs'] else "None"
-    live_msg = (f"Elevation loaded ({live_stats['n']} DEM samples) · "
+    obs_str  = fmt_d(live_stats['first_obs'], units) if live_stats['first_obs'] else "None"
+    live_msg = (f"Elevation loaded ({live_stats['n']} samples) · "
                 f"Avg signal: {live_stats['avg']}% · "
                 f"Shadowed: {live_stats['shadow']}% · "
                 f"1st obstruction: {obs_str}")
-    st.markdown(f'<div class="status-ok">✓ {live_msg}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="status-ok">✓ {live_msg} {src_html}</div>', unsafe_allow_html=True)
 elif s == "error":
     st.markdown(f'<div class="status-err">✕ {st.session_state.dem_msg}</div>', unsafe_allow_html=True)
 else:
@@ -606,9 +723,6 @@ with c2:
       <div class="metric-sub">{note} · VBW {vbw:.1f}° · Width: {fmt_d(far_d - near_d, units)}</div>
     </div>""", unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────────────
-# ASSUMPTION NOTE
-# ─────────────────────────────────────────────────────
 u_lbl = "Metric (m/km)" if units == "Metric (m, km)" else "USA (ft/mi)"
 st.markdown(f"""<div class="assume">
   <strong>Assumption:</strong> Vertical beamwidth defaults to <code>{vbw:.1f} deg</code>,
@@ -616,7 +730,7 @@ st.markdown(f"""<div class="assume">
 </div>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────
-# TERRAIN STATS ROW  — live, updates on every input change
+# TERRAIN STATS ROW
 # ─────────────────────────────────────────────────────
 if live_stats:
     obs_str = fmt_d(live_stats['first_obs'], units) if live_stats['first_obs'] else "None"
@@ -662,11 +776,9 @@ map_data = st_folium(map_obj, width="100%", height=380,
                      returned_objects=["last_clicked"],
                      key="sector_map")
 
-# ── Clicked-point display ──────────────────────────────
 _clicked = (map_data or {}).get("last_clicked")
 if _clicked and _clicked.get("lat") is not None:
     _clat, _clng = _clicked["lat"], _clicked["lng"]
-    # Great-circle distance from antenna site to clicked point
     _R = 6_371_000.0
     _dlat = math.radians(_clat - site_lat)
     _dlon = math.radians(_clng - site_lon)
@@ -694,7 +806,7 @@ else:
         unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────
-# MAP LEGEND — Sector Metrics (also live)
+# MAP LEGEND
 # ─────────────────────────────────────────────────────
 st.markdown(f"""
 <div class="map-legend-box">
