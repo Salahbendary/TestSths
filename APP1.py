@@ -270,13 +270,6 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
     seg_red    = make_seg(shadow)
     seg_orange = make_seg(in_foot)
 
-    # ── Vertical band fills ──
-    band_strong = np.where(strong,  y_max, np.nan)
-    band_foot   = np.where(in_foot, y_max, np.nan)
-    band_shadow = np.where(shadow,  y_max, np.nan)
-
-    fig = go.Figure()
-
     # ── Background vertical bands ──
     for band_y, col, name in [
         (band_strong, 'rgba(187,247,208,0.20)', '_bstrong'),
@@ -284,13 +277,12 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         (band_shadow, 'rgba(254,202,202,0.25)', '_bshadow'),
     ]:
         fig.add_trace(go.Scatter(
-        x=xs, y=near_ray,
-        fill='tonexty',
-        fillcolor='rgba(125,211,252,0.25)',
-        line=dict(color='rgba(125,211,252,0)', width=0),
-        showlegend=False, name='_nearfill',
-        hoverinfo='skip'
-    ))
+            x=xs, y=band_y,
+            fill='tozeroy', fillcolor=col,
+            line=dict(color='rgba(0,0,0,0)', width=0),
+            showlegend=False, name=name,
+            connectgaps=False, hoverinfo='skip'
+        ))
 
     # ── Terrain base fill (light teal) ──
     fig.add_trace(go.Scatter(
