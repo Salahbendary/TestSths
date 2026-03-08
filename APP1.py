@@ -4,6 +4,7 @@ Antenna Downtilt Calculator — Streamlit
 
 import streamlit as st
 import numpy as np
+import requests
 import plotly.graph_objects as go
 import folium
 from streamlit_folium import st_folium
@@ -150,58 +151,19 @@ def gc_dest(lat, lon, bearing, dist_m):
 # ─────────────────────────────────────────────────────
 # DEM FETCH
 # ─────────────────────────────────────────────────────
-# ── SRTM local elevation lookup ──────────────────────────────────────────────
-# Uses the `srtm` package which auto-downloads and caches HGT tile files
-# locally (~3 MB per 1°×1° tile). Egypt spans ~120 tiles total.
-# Tiles are stored in ~/.cache/srtm/ and never need re-downloading.
-# No API key, no rate limit, works fully offline after first tile download.
-#
-# Install once:  pip install srtm.py
-#
-# SRTM coverage for Egypt:
-#   Latitude  22 N → 32 N
-#   Longitude 25 E → 37 E
-# Resolution: ~90 m (SRTM3) — accurate enough for RF terrain profiling.
-
-import srtm as _srtm
-
-@st.cache_resource(show_spinner=False)
-def _get_srtm():
-    """Load SRTM data object once and reuse across all calls."""
-    return _srtm.get_data()
-
-def _srtm_elevation(srtm_data, lat, lon):
-    """Return elevation in metres for a single point, 0.0 if tile missing."""
-    v = srtm_data.get_elevation(lat, lon)
-    return float(v) if v is not None else 0.0
-
 @st.cache_data(show_spinner=False)
 def fetch_dem(lat, lon, az, dist_m, n=100):
-    """
-    Build an elevation profile of n points along azimuth `az` from (lat,lon)
-    out to dist_m metres, using locally cached SRTM tiles.
-
-    On first call for a new tile the srtm package downloads that HGT file
-    (~3 MB) automatically; subsequent calls for the same area are instant.
-    """
-    srtm_data = _get_srtm()
-
-    distances = np.linspace(0, dist_m, n)
-    elevations = []
-    for d in distances:
-        p_lat, p_lon = gc_dest(lat, lon, az, d)
-        elevations.append(_srtm_elevation(srtm_data, p_lat, p_lon))
-
-    elev = np.array(elevations, dtype=float)
-
-    # Sanity check — srtm returns 0 for ocean/missing; warn if all zeros
-    if np.all(elev == 0.0):
-        raise ValueError(
-            "All elevation values are zero — tile may be missing or "
-            "location is outside SRTM coverage (lat 60S–60N)."
-        )
-
-    return distances, elev
+    lats, lons = [], []
+    for i in range(n):
+        p = gc_dest(lat, lon, az, i/(n-1)*dist_m)
+        lats.append(f"{p[0]:.7f}"); lons.append(f"{p[1]:.7f}")
+    url = f"https://api.open-meteo.com/v1/elevation?latitude={','.join(lats)}&longitude={','.join(lons)}"
+    r = requests.get(url, timeout=15); r.raise_for_status()
+    data = r.json()
+    if "elevation" not in data or not data["elevation"]:
+        raise ValueError("No elevation data")
+    elev = np.array(data["elevation"], dtype=float)
+    return np.linspace(0, dist_m, n), elev
 
 # ─────────────────────────────────────────────────────
 # PLOTLY CHART  — matches rfuniverse style exactly
@@ -229,46 +191,27 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
     y_min = float(np.min(terrain_y)) - 20
     y_max = site_elev + h_m + 50
 
-    ant_z = site_elev + h_m  # antenna absolute elevation (MSL)
-
-    # ── LOS shadow detection ──────────────────────────────────────────────────
-    # A point at distance d is shadowed if ANY terrain sample between 0 and d
-    # rises ABOVE the straight line-of-sight from the antenna to that point.
-    # This is true terrain shadowing — not a flat-ray comparison.
-    def compute_los_clear(distances, terrain):
-        n = len(distances)
-        los_clear = np.ones(n, dtype=bool)
-        for i in range(1, n):
-            d_target = distances[i]
-            z_target = terrain[i]
-            if d_target <= 0:
-                continue
-            # LOS line height at each previous sample point
-            los_line = ant_z + (z_target - ant_z) * (distances[:i] / d_target)
-            # Shadowed if any intermediate terrain exceeds LOS line
-            if np.any(terrain[:i] > los_line + 0.1):   # 0.1 m tolerance
-                los_clear[i] = False
-        return los_clear
-
-    if has_dem:
-        # Compute LOS on dense xs grid by interpolating DEM
-        los_clear = compute_los_clear(xs, terrain_y)
-    else:
-        los_clear = np.ones(len(xs), dtype=bool)   # flat earth → no shadows
-
-    # ── Signal classification for each x ──────────────────────────────────────
-    in_foot = (xs >= near_d) & (xs <= far_d)
-    strong  = los_clear  & ~in_foot    # LOS clear, outside footprint  → green
-    shadow  = ~los_clear & ~in_foot    # LOS blocked, outside footprint → red
-    # in_foot → orange regardless of LOS (it is the coverage zone)
+    # ── Signal classification for each x ──
+    in_foot   = (xs >= near_d) & (xs <= far_d)
+    main_above = main_ray >= terrain_y
+    strong    = main_above & ~in_foot
+    shadow    = ~main_above & ~in_foot
 
     # Segment arrays: green/red/orange on terrain surface
     def make_seg(mask):
-        return np.where(mask, terrain_y, np.nan)
+        y = np.where(mask, terrain_y, np.nan)
+        return y
 
     seg_green  = make_seg(strong)
     seg_red    = make_seg(shadow)
     seg_orange = make_seg(in_foot)
+
+    # ── Vertical band fills ──
+    band_strong = np.where(strong,  y_max, np.nan)
+    band_foot   = np.where(in_foot, y_max, np.nan)
+    band_shadow = np.where(shadow,  y_max, np.nan)
+
+    fig = go.Figure()
 
     # ── Background vertical bands ──
     for band_y, col, name in [
@@ -432,7 +375,7 @@ def build_map(lat, lon, az, hbw, main_d, near_d, far_d, dem_d, dist_m):
     folium.Polygon([(lat,lon)]+outer+[(lat,lon)],
         color='#0ea5e9', weight=1.5, fill=True, fill_color='#0ea5e9', fill_opacity=0.06).add_to(m)
     folium.Polygon(outer+inner,
-        color='#4ade80', weight=2, fill=True, fill_color='#4ade80', fill_opacity=0.20).add_to(m)
+        color='#0ea5e9', weight=2, fill=True, fill_color='#0ea5e9', fill_opacity=0.20).add_to(m)
     folium.PolyLine(path, color='#f97316', weight=2.2, opacity=0.8, dash_array='7 5').add_to(m)
     folium.PolyLine([(lat,lon), gc_dest(lat,lon,az,main_d)],
         color='#16a34a', weight=1.5, opacity=0.7).add_to(m)
@@ -594,21 +537,13 @@ else:
 live_stats = None
 if has_dem and terrain_on:
     se_stats  = float(dem_elev[0])
-    ant_z_stats = se_stats + h_m
-    # LOS-based shadow detection on actual DEM samples
-    n_dem = len(dem_d)
-    los_arr = np.ones(n_dem, dtype=bool)
-    for i in range(1, n_dem):
-        d_t = dem_d[i]
-        if d_t <= 0:
-            continue
-        los_line = ant_z_stats + (dem_elev[i] - ant_z_stats) * (dem_d[:i] / d_t)
-        if np.any(dem_elev[:i] > los_line + 0.1):
-            los_arr[i] = False
-    n_above   = int(np.sum(los_arr))
-    avg_sig   = round(n_above / n_dem * 100)
+    # Ray height at each DEM sample using CURRENT h_m and dt_deg
+    ray_z     = se_stats + h_m - dem_d * np.tan(np.radians(dt_deg))
+    above_arr = ray_z >= dem_elev
+    n_above   = int(np.sum(above_arr))
+    avg_sig   = round(n_above / len(dem_d) * 100)
     shadow    = 100 - avg_sig
-    blocked   = ~los_arr
+    blocked   = ~above_arr
     first_obs = float(dem_d[np.argmax(blocked)]) if np.any(blocked) else None
     live_stats = dict(
         avg       = avg_sig,
@@ -748,7 +683,7 @@ st.markdown(f"""
   <div class="map-legend-title">Sector Metrics</div>
   <div class="mleg-row">
     <div class="mleg"><div class="mleg-box" style="background:rgba(14,165,233,0.10);border-color:#0ea5e9;"></div>Sector outline</div>
-    <div class="mleg"><div class="mleg-box" style="background:rgba(74,222,128,0.22);border-color:#4ade80;"></div>Footprint zone</div>
+    <div class="mleg"><div class="mleg-box" style="background:rgba(14,165,233,0.22);border-color:#0ea5e9;"></div>Footprint zone</div>
     <div class="mleg"><div class="mleg-dot" style="background:#0ea5e9;"></div>Antenna Site</div>
     <div class="mleg"><div class="mleg-dot" style="background:#0d9488;"></div>Main Lobe Hit</div>
   </div>
