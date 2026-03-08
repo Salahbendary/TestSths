@@ -191,33 +191,54 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
     y_min = float(np.min(terrain_y)) - 20
     y_max = site_elev + h_m + 50
 
-    # ── Signal classification for each x ──
-    in_foot   = (xs >= near_d) & (xs <= far_d)
-    main_above = main_ray >= terrain_y
-    strong    = main_above & ~in_foot
-    shadow    = ~main_above & ~in_foot
+    # ── Distance-zone classification ──────────────────────────────────────────
+    # Blue  : 0       → near_d  (approaching footprint)
+    # Yellow: near_d  → far_d   (footprint zone)
+    # Green : far_d   → end     (beyond footprint)
+    zone_blue   = xs <  near_d
+    zone_yellow = (xs >= near_d) & (xs <= far_d)
+    zone_green  = xs >  far_d
 
-    # Segment arrays: green/red/orange on terrain surface
+    in_foot = zone_yellow   # keep for terrain line colouring below
+
+    # ── LOS shadow detection for terrain line colour ───────────────────────
+    ant_z = site_elev + h_m
+    def compute_los_clear(distances, terrain):
+        n = len(distances)
+        los_clear = np.ones(n, dtype=bool)
+        for i in range(1, n):
+            d_target = distances[i]
+            if d_target <= 0:
+                continue
+            los_line = ant_z + (terrain[i] - ant_z) * (distances[:i] / d_target)
+            if np.any(terrain[:i] > los_line + 0.1):
+                los_clear[i] = False
+        return los_clear
+
+    los_clear  = compute_los_clear(xs, terrain_y) if has_dem else np.ones(len(xs), dtype=bool)
+    strong     = los_clear  & ~in_foot
+    shadow     = ~los_clear & ~in_foot
+
+    # Terrain line segments
     def make_seg(mask):
-        y = np.where(mask, terrain_y, np.nan)
-        return y
+        return np.where(mask, terrain_y, np.nan)
 
     seg_green  = make_seg(strong)
     seg_red    = make_seg(shadow)
     seg_orange = make_seg(in_foot)
 
-    # ── Vertical band fills ──
-    band_strong = np.where(strong,  y_max, np.nan)
-    band_foot   = np.where(in_foot, y_max, np.nan)
-    band_shadow = np.where(shadow,  y_max, np.nan)
+    # ── Zone band arrays (fill to y_max) ──
+    band_blue   = np.where(zone_blue,   y_max, np.nan)
+    band_yellow = np.where(zone_yellow, y_max, np.nan)
+    band_green  = np.where(zone_green,  y_max, np.nan)
 
     fig = go.Figure()
 
-    # ── Background vertical bands ──
+    # ── Background vertical zone bands ────────────────────────────────────
     for band_y, col, name in [
-        (band_strong, 'rgba(187,247,208,0.20)', '_bstrong'),
-        (band_foot,   'rgba(254,215,170,0.28)', '_bfoot'),
-        (band_shadow, 'rgba(254,202,202,0.25)', '_bshadow'),
+        (band_blue,   'rgba(186,230,253,0.35)', '_bblue'),
+        (band_yellow, 'rgba(254,243,199,0.45)', '_byellow'),
+        (band_green,  'rgba(220,252,231,0.35)', '_bgreen'),
     ]:
         fig.add_trace(go.Scatter(
             x=xs, y=band_y,
@@ -354,7 +375,7 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
                  text=f'Downtilt {dt_deg} deg | V-BW {vbw_deg} deg',
                  font=dict(size=10, color='#64748b', family='Inter'), xanchor='center'),
             dict(x=1.0, y=1.04, xref='paper', yref='paper', showarrow=False,
-                 text='Green=strong, yellow=weak, red=shadowed by terrain',
+                 text='Blue=approaching, yellow=footprint, green=beyond | red=shadowed',
                  font=dict(size=10, color='#64748b', family='Inter'), xanchor='right'),
         ]
     )
@@ -375,7 +396,7 @@ def build_map(lat, lon, az, hbw, main_d, near_d, far_d, dem_d, dist_m):
     folium.Polygon([(lat,lon)]+outer+[(lat,lon)],
         color='#0ea5e9', weight=1.5, fill=True, fill_color='#0ea5e9', fill_opacity=0.06).add_to(m)
     folium.Polygon(outer+inner,
-        color='#0ea5e9', weight=2, fill=True, fill_color='#0ea5e9', fill_opacity=0.20).add_to(m)
+        color='#4ade80', weight=2, fill=True, fill_color='#4ade80', fill_opacity=0.20).add_to(m)
     folium.PolyLine(path, color='#f97316', weight=2.2, opacity=0.8, dash_array='7 5').add_to(m)
     folium.PolyLine([(lat,lon), gc_dest(lat,lon,az,main_d)],
         color='#16a34a', weight=1.5, opacity=0.7).add_to(m)
@@ -683,7 +704,7 @@ st.markdown(f"""
   <div class="map-legend-title">Sector Metrics</div>
   <div class="mleg-row">
     <div class="mleg"><div class="mleg-box" style="background:rgba(14,165,233,0.10);border-color:#0ea5e9;"></div>Sector outline</div>
-    <div class="mleg"><div class="mleg-box" style="background:rgba(14,165,233,0.22);border-color:#0ea5e9;"></div>Footprint zone</div>
+    <div class="mleg"><div class="mleg-box" style="background:rgba(74,222,128,0.22);border-color:#4ade80;"></div>Footprint zone</div>
     <div class="mleg"><div class="mleg-dot" style="background:#0ea5e9;"></div>Antenna Site</div>
     <div class="mleg"><div class="mleg-dot" style="background:#0d9488;"></div>Main Lobe Hit</div>
   </div>
