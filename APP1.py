@@ -194,10 +194,9 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
     # ── Distance-zone classification ──────────────────────────────────────────
     # Blue  : 0       → near_d  (approaching footprint)
     # Yellow: near_d  → far_d   (footprint zone)
-    # Green : far_d   → end     (beyond footprint)
-    zone_blue   = xs <  near_d
+    # Blue  : far_d   → end     (beyond footprint — same blue as before)
     zone_yellow = (xs >= near_d) & (xs <= far_d)
-    zone_green  = xs >  far_d
+    zone_blue   = ~zone_yellow   # everything outside footprint is blue
 
     in_foot = zone_yellow   # keep for terrain line colouring below
 
@@ -230,15 +229,13 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
     # ── Zone band arrays (fill to y_max) ──
     band_blue   = np.where(zone_blue,   y_max, np.nan)
     band_yellow = np.where(zone_yellow, y_max, np.nan)
-    band_green  = np.where(zone_green,  y_max, np.nan)
 
     fig = go.Figure()
 
     # ── Background vertical zone bands ────────────────────────────────────
     for band_y, col, name in [
-        (band_blue,   'rgba(186,230,253,0.35)', '_bblue'),
-        (band_yellow, 'rgba(254,243,199,0.45)', '_byellow'),
-        (band_green,  'rgba(220,252,231,0.35)', '_bgreen'),
+        (band_blue,   'rgba(186,230,253,0.40)', '_bblue'),
+        (band_yellow, 'rgba(254,243,199,0.50)', '_byellow'),
     ]:
         fig.add_trace(go.Scatter(
             x=xs, y=band_y,
@@ -248,11 +245,11 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
             connectgaps=False, hoverinfo='skip'
         ))
 
-    # ── Terrain base fill (light teal) ──
+    # ── Terrain base fill (only under yellow zone — blue zone handles the rest) ──
     fig.add_trace(go.Scatter(
         x=xs, y=terrain_y,
         fill='tozeroy',
-        fillcolor='rgba(186,230,253,0.40)',
+        fillcolor='rgba(186,230,253,0.00)',
         line=dict(color='#94a3b8', width=1.2),
         name='Terrain', showlegend=False,
         hovertemplate='Dist: %{x:.0f} m<br>Elev: %{y:.1f} m MSL<extra></extra>'
@@ -375,7 +372,7 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
                  text=f'Downtilt {dt_deg} deg | V-BW {vbw_deg} deg',
                  font=dict(size=10, color='#64748b', family='Inter'), xanchor='center'),
             dict(x=1.0, y=1.04, xref='paper', yref='paper', showarrow=False,
-                 text='Blue=approaching, yellow=footprint, green=beyond | red=shadowed',
+                 text='Blue=approaching/beyond, yellow=footprint | red=shadowed by terrain',
                  font=dict(size=10, color='#64748b', family='Inter'), xanchor='right'),
         ]
     )
