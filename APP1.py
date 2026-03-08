@@ -284,12 +284,13 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         (band_shadow, 'rgba(254,202,202,0.25)', '_bshadow'),
     ]:
         fig.add_trace(go.Scatter(
-            x=xs, y=band_y,
-            fill='tozeroy', fillcolor=col,
-            line=dict(color='rgba(0,0,0,0)', width=0),
-            showlegend=False, name=name,
-            connectgaps=False, hoverinfo='skip'
-        ))
+        x=xs, y=near_ray,
+        fill='tonexty',
+        fillcolor='rgba(125,211,252,0.25)',
+        line=dict(color='rgba(125,211,252,0)', width=0),
+        showlegend=False, name='_nearfill',
+        hoverinfo='skip'
+    ))
 
     # ── Terrain base fill (light teal) ──
     fig.add_trace(go.Scatter(
