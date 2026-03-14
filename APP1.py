@@ -1,6 +1,6 @@
 """
 Antenna Downtilt Calculator — Streamlit
-Elevation: SRTM local cache (srtm.py) with Open-Meteo as fallback
+Elevation: Copernicus DEM 30m via Open-Meteo (primary), Open-Elevation fallback
 """
 
 import streamlit as st
@@ -12,36 +12,7 @@ from streamlit_folium import st_folium
 import zipfile, io, math
 import time
 
-# ── SRTM local elevation (downloaded once, cached on disk) ──────────────────
-try:
-    import srtm as _srtm_lib
-    _SRTM_AVAILABLE = True
-except ImportError:
-    _SRTM_AVAILABLE = False
-
-@st.cache_resource(show_spinner=False)
-def _load_srtm():
-    """Load SRTM data object once per Streamlit session.
-    Tiles are downloaded on first access and cached in ~/.srtm/"""
-    if not _SRTM_AVAILABLE:
-        return None
-    return _srtm_lib.get_data()
-
-def _elev_srtm(lats, lons):
-    """Query elevation for lists of lat/lon using local SRTM tiles.
-    Returns list of floats (NaN → 0.0 fallback).
-    Tiles auto-download on first call (~90 KB each), then stay cached.
-    """
-    data = _load_srtm()
-    if data is None:
-        raise RuntimeError("srtm library not available")
-    result = []
-    for lat, lon in zip(lats, lons):
-        e = data.get_elevation(lat, lon)
-        result.append(float(e) if e is not None else 0.0)
-    return result
-
-# ── Open-Meteo (cloud API, rate-limited — used as fallback only) ─────────────
+# ── Copernicus DEM 30m via Open-Meteo API (primary source) ──────────────────
 def _elev_open_meteo(lats, lons):
     url = (
         "https://api.open-meteo.com/v1/elevation"
@@ -147,7 +118,7 @@ section[data-testid="stSidebar"] .block-container { padding-top:1.4rem; }
   padding:9px 14px; margin-top:8px; font-size:0.74rem; color:#94a3b8;
   display:flex; align-items:center; gap:7px; }
 
-/* SRTM source badge */
+/* Elevation source badge */
 .src-badge { display:inline-block; font-size:0.64rem; font-weight:600;
   font-family:'JetBrains Mono',monospace; padding:2px 8px; border-radius:4px;
   margin-left:6px; }
@@ -209,7 +180,7 @@ def gc_dest(lat, lon, bearing, dist_m):
     return math.degrees(la2), math.degrees(lo2)
 
 # ─────────────────────────────────────────────────────
-# ELEVATION FETCH  — SRTM-first, cloud fallback
+# ELEVATION FETCH  — Copernicus DEM 30m primary, Open-Elevation fallback
 # ─────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)
@@ -218,11 +189,9 @@ def fetch_dem(lat, lon, az, dist_m, n=100):
     Fetch elevation profile along a great-circle path.
 
     Priority:
-      1. srtm.py  — downloads SRTM3 tiles (~90 KB each) on first call,
-                    then reads from local disk cache (~/.srtm/).
-                    Works offline after first download. No rate limits.
-      2. Open-Meteo elevation API (cloud, 600 req/min free tier)
-      3. Open-Elevation API (cloud, free, slower)
+      1. Open-Meteo elevation API — uses Copernicus DEM GLO-30 (30m resolution)
+         cloud-based, 600 req/min free tier.
+      2. Open-Elevation API (cloud, free, slower) — fallback.
 
     Returns (distances_m array, elevations_m array, source_label)
     """
@@ -232,18 +201,10 @@ def fetch_dem(lat, lon, az, dist_m, n=100):
         lats.append(round(p[0], 7))
         lons.append(round(p[1], 7))
 
-    # ── 1. Try SRTM local cache (best for Egypt — offline, no limits) ──────
-    if _SRTM_AVAILABLE:
-        try:
-            elevs = _elev_srtm(lats, lons)
-            return np.linspace(0, dist_m, n), np.array(elevs, dtype=float), "SRTM (local)"
-        except Exception as e:
-            pass  # fall through to cloud
-
-    # ── 2. Open-Meteo cloud API in safe chunks ──────────────────────────────
+    # ── 1. Copernicus DEM 30m via Open-Meteo API ────────────────────────────
     CHUNK = 25
     elevs = []
-    source = "Open-Meteo (cloud)"
+    source = "Copernicus DEM 30m"
     for start in range(0, n, CHUNK):
         lat_c = lats[start: start + CHUNK]
         lon_c = lons[start: start + CHUNK]
@@ -251,17 +212,17 @@ def fetch_dem(lat, lon, az, dist_m, n=100):
             elevs.extend(_elev_open_meteo(lat_c, lon_c))
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 429:
-                # Rate limited — wait and retry once with longer delay
                 time.sleep(2.0)
                 try:
                     elevs.extend(_elev_open_meteo(lat_c, lon_c))
                 except Exception:
-                    # ── 3. Open-Elevation fallback ────────────────────────
+                    # ── 2. Open-Elevation fallback ────────────────────────
                     elevs.extend(_elev_open_elevation(lat_c, lon_c))
                     source = "Open-Elevation (cloud)"
             else:
                 raise
         except Exception:
+            # ── 2. Open-Elevation fallback ────────────────────────────────
             elevs.extend(_elev_open_elevation(lat_c, lon_c))
             source = "Open-Elevation (cloud)"
         if start + CHUNK < n:
@@ -271,10 +232,62 @@ def fetch_dem(lat, lon, az, dist_m, n=100):
 
 
 # ─────────────────────────────────────────────────────
+# LOBE HELPERS
+# ─────────────────────────────────────────────────────
+def _get_clipped_ray(xs, terrain_y, site_elev, h_m, angle_deg):
+    """Return (xs_c, ys_c) clipped at first terrain intersection (with interpolated hit point)."""
+    tan_a  = math.tan(math.radians(angle_deg))
+    ray_y  = site_elev + h_m - xs * tan_a
+    xs_c, ys_c = [], []
+    for i in range(len(xs)):
+        if ray_y[i] >= terrain_y[i]:
+            xs_c.append(float(xs[i]))
+            ys_c.append(float(ray_y[i]))
+        else:
+            if i > 0:
+                r0, r1 = ray_y[i-1], ray_y[i]
+                t0, t1 = terrain_y[i-1], terrain_y[i]
+                denom = (r0 - r1) - (t0 - t1)
+                if abs(denom) > 1e-6:
+                    frac   = (r0 - t0) / denom
+                    xi     = float(xs[i-1]) + frac * float(xs[i] - xs[i-1])
+                    yi     = t0 + frac * (t1 - t0)
+                    xs_c.append(xi); ys_c.append(yi)
+            break
+    if not xs_c:
+        xs_c, ys_c = [float(xs[0])], [float(site_elev + h_m)]
+    return np.array(xs_c), np.array(ys_c)
+
+
+def _lobe_polygon(xs_ray, ys_ray, xs_ray2, ys_ray2, xs_all, terrain_all):
+    """
+    Build closed polygon between two clipped rays, bridged by terrain at hit points.
+    ray1 must extend FARTHER than ray2 (i.e. xs_ray[-1] >= xs_ray2[-1]).
+    """
+    x1, x2 = xs_ray[-1], xs_ray2[-1]
+    # terrain bridge from x2 → x1 (reversed so polygon winds correctly)
+    mask   = (xs_all >= x2) & (xs_all <= x1)
+    br_x   = xs_all[mask][::-1]
+    br_y   = terrain_all[mask][::-1]
+    poly_x = list(xs_ray)  + list(br_x)  + list(xs_ray2[::-1])
+    poly_y = list(ys_ray)  + list(br_y)  + list(ys_ray2[::-1])
+    return poly_x, poly_y
+
+
+def _lower_polygon(xs_near, ys_near, xs_all, terrain_all):
+    """Polygon for lower lobe: near_ray forward, then terrain back to x=0."""
+    x_hit  = xs_near[-1]
+    mask   = xs_all <= x_hit
+    br_x   = xs_all[mask][::-1]
+    br_y   = terrain_all[mask][::-1]
+    return list(xs_near) + list(br_x), list(ys_near) + list(br_y)
+
+
+# ─────────────────────────────────────────────────────
 # PLOTLY CHART
 # ─────────────────────────────────────────────────────
 def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
-                dem_d, dem_elev, slider_d, units):
+                dem_d, dem_elev, slider_d, units, az_deg=0.0):
 
     N = 400
     xs = np.linspace(0, dist_m, N)
@@ -285,185 +298,267 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
     def elev_at(d):
         return float(np.interp(d, dem_d, dem_elev)) if has_dem else site_elev
 
-    def ray_z(d, ang):
-        return site_elev + h_m - d * math.tan(math.radians(ang))
-
     terrain_y = np.array([elev_at(d) for d in xs])
-    main_ray   = np.array([ray_z(d, dt_deg) for d in xs])
-    near_ray   = np.array([ray_z(d, dt_deg + vbw_deg/2) for d in xs])
-    far_ray    = np.array([ray_z(d, far_angle) for d in xs])
+    y_min     = float(np.min(terrain_y)) - 20
+    y_max     = site_elev + h_m + 50
 
-    y_min = float(np.min(terrain_y)) - 20
-    y_max = site_elev + h_m + 50
+    # ── Clipped ray arrays ────────────────────────────────────────────────
+    xs_far,  ys_far  = _get_clipped_ray(xs, terrain_y, site_elev, h_m, far_angle)
+    xs_main, ys_main = _get_clipped_ray(xs, terrain_y, site_elev, h_m, dt_deg)
+    xs_near, ys_near = _get_clipped_ray(xs, terrain_y, site_elev, h_m, dt_deg + vbw_deg/2)
 
-    in_foot   = (xs >= near_d) & (xs <= far_d)
-    main_above = main_ray >= terrain_y
-    strong    = main_above & ~in_foot
-    shadow    = ~main_above & ~in_foot
+    # ── Intersection distances on terrain ────────────────────────────────
+    far_hit_x  = float(xs_far[-1])
+    main_hit_x = float(xs_main[-1])
+    near_hit_x = float(xs_near[-1])
 
-    def make_seg(mask):
-        return np.where(mask, terrain_y, np.nan)
-
-    seg_green  = make_seg(strong)
-    seg_red    = make_seg(shadow)
-    seg_orange = make_seg(in_foot)
-
-    band_strong = np.where(strong,  y_max, np.nan)
-    band_foot   = np.where(in_foot, y_max, np.nan)
-    band_shadow = np.where(shadow,  y_max, np.nan)
+    # ── Lobe colours ─────────────────────────────────────────────────────
+    C_UPPER_FILL = 'rgba(59,130,246,0.28)'
+    C_UPPER_LINE = '#3b82f6'
+    C_MAIN_FILL  = 'rgba(248,113,113,0.28)'
+    C_MAIN_LINE  = '#f87171'
+    C_LOWER_FILL = 'rgba(253,224,71,0.28)'
+    C_LOWER_LINE = '#fde047'
 
     fig = go.Figure()
 
-    for band_y, col, name in [
-        (band_strong, 'rgba(187,247,208,0.20)', '_bstrong'),
-        (band_foot,   'rgba(254,215,170,0.28)', '_bfoot'),
-        (band_shadow, 'rgba(254,202,202,0.25)', '_bshadow'),
-    ]:
-        fig.add_trace(go.Scatter(
-            x=xs, y=band_y,
-            fill='tozeroy', fillcolor=col,
-            line=dict(color='rgba(0,0,0,0)', width=0),
-            showlegend=False, name=name,
-            connectgaps=False, hoverinfo='skip'
-        ))
-
+    # ── Terrain fill (light blue) ─────────────────────────────────────────
     fig.add_trace(go.Scatter(
         x=xs, y=terrain_y,
         fill='tozeroy',
-        fillcolor='rgba(186,230,253,0.40)',
-        line=dict(color='#94a3b8', width=1.2),
-        name='Terrain', showlegend=False,
+        fillcolor='rgba(125,211,252,0.30)',
+        line=dict(color='#7dd3fc', width=1.5),
+        name='Terrain',
         hovertemplate='Dist: %{x:.0f} m<br>Elev: %{y:.1f} m MSL<extra></extra>'
     ))
 
-    for seg_y, col, lw, leg in [
-        (seg_green,  '#16a34a', 2.5, 'Strong signal'),
-        (seg_red,    '#dc2626', 2.5, 'Shadowed'),
-        (seg_orange, '#f97316', 3.0, 'Footprint'),
-    ]:
+    # ── Lower lobe fill (light yellow) ────────────────────────────────────
+    lo_px, lo_py = _lower_polygon(xs_near, ys_near, xs, terrain_y)
+    fig.add_trace(go.Scatter(
+        x=lo_px, y=lo_py,
+        fill='toself', fillcolor=C_LOWER_FILL,
+        line=dict(color='rgba(0,0,0,0)', width=0),
+        showlegend=False, name='_lower_fill', hoverinfo='skip'
+    ))
+
+    # ── Main lobe fill (light red) ────────────────────────────────────────
+    # Ensure ordering: main extends farther than near
+    if main_hit_x >= near_hit_x:
+        ma_px, ma_py = _lobe_polygon(xs_main, ys_main, xs_near, ys_near, xs, terrain_y)
+    else:
+        ma_px, ma_py = _lobe_polygon(xs_near, ys_near, xs_main, ys_main, xs, terrain_y)
+    fig.add_trace(go.Scatter(
+        x=ma_px, y=ma_py,
+        fill='toself', fillcolor=C_MAIN_FILL,
+        line=dict(color='rgba(0,0,0,0)', width=0),
+        showlegend=False, name='_main_fill', hoverinfo='skip'
+    ))
+
+    # ── Upper lobe fill (blue) ────────────────────────────────────────────
+    if far_hit_x >= main_hit_x:
+        up_px, up_py = _lobe_polygon(xs_far, ys_far, xs_main, ys_main, xs, terrain_y)
+    else:
+        up_px, up_py = _lobe_polygon(xs_main, ys_main, xs_far, ys_far, xs, terrain_y)
+    fig.add_trace(go.Scatter(
+        x=up_px, y=up_py,
+        fill='toself', fillcolor=C_UPPER_FILL,
+        line=dict(color='rgba(0,0,0,0)', width=0),
+        showlegend=False, name='_upper_fill', hoverinfo='skip'
+    ))
+
+    # ── Lobe ray lines (clipped) ──────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=xs_far, y=ys_far,
+        line=dict(color=C_UPPER_LINE, width=2, dash='solid'),
+        name=f'Upper Lobe ({fmt_d(far_hit_x, units)})',
+        connectgaps=False,
+        hovertemplate='Upper: %{y:.1f} m<extra></extra>'
+    ))
+    fig.add_trace(go.Scatter(
+        x=xs_main, y=ys_main,
+        line=dict(color=C_MAIN_LINE, width=2, dash='solid'),
+        name=f'Main Lobe ({fmt_d(main_hit_x, units)})',
+        connectgaps=False,
+        hovertemplate='Main: %{y:.1f} m<extra></extra>'
+    ))
+    fig.add_trace(go.Scatter(
+        x=xs_near, y=ys_near,
+        line=dict(color=C_LOWER_LINE, width=2, dash='solid'),
+        name=f'Lower Lobe ({fmt_d(near_hit_x, units)})',
+        connectgaps=False,
+        hovertemplate='Lower: %{y:.1f} m<extra></extra>'
+    ))
+
+    # ── Intersection markers ──────────────────────────────────────────────
+    for hx, col in [(far_hit_x, C_UPPER_LINE), (main_hit_x, C_MAIN_LINE), (near_hit_x, C_LOWER_LINE)]:
         fig.add_trace(go.Scatter(
-            x=xs, y=seg_y,
-            line=dict(color=col, width=lw),
-            showlegend=False, name=leg,
-            connectgaps=False, hoverinfo='skip'
+            x=[hx], y=[elev_at(hx)],
+            mode='markers',
+            marker=dict(size=9, color=col, symbol='x', line=dict(color='white', width=1.5)),
+            showlegend=False, name='_hit',
+            hovertemplate=f'Hit: {fmt_d(hx, units)}<extra></extra>'
         ))
 
-    fig.add_trace(go.Scatter(
-        x=xs, y=main_ray,
-        line=dict(color='#16a34a', width=2),
-        name='Main lobe ray',
-        hovertemplate='Main lobe: %{y:.1f} m<extra></extra>'
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=xs, y=far_ray,
-        line=dict(color='rgba(125,211,252,0)', width=0),
-        showlegend=False, name='_farlimit_fill',
-        hoverinfo='skip'
-    ))
-    fig.add_trace(go.Scatter(
-        x=xs, y=near_ray,
-        fill='tonexty',
-        fillcolor='rgba(125,211,252,0.25)',
-        line=dict(color='rgba(125,211,252,0)', width=0),
-        showlegend=False, name='_nearfill',
-        hoverinfo='skip'
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=xs, y=near_ray,
-        line=dict(color='#7dd3fc', width=1.5, dash='dash'),
-        name='Footprint lobe limits',
-        hovertemplate='Near limit: %{y:.1f} m<extra></extra>'
-    ))
-    fig.add_trace(go.Scatter(
-        x=xs, y=far_ray,
-        line=dict(color='#7dd3fc', width=1.5, dash='dash'),
-        showlegend=False, name='_farlimit',
-        hovertemplate='Far limit: %{y:.1f} m<extra></extra>'
-    ))
-
+    # ── Slider line ───────────────────────────────────────────────────────
     sl_elev = elev_at(slider_d)
     fig.add_trace(go.Scatter(
-        x=[slider_d, slider_d],
-        y=[y_min, y_max],
+        x=[slider_d, slider_d], y=[y_min, y_max],
         line=dict(color='#dc2626', width=1.8, dash='dot'),
         name='Selected distance',
         hovertemplate=f'Selected: {fmt_d(slider_d, units)}<br>Terrain: {sl_elev:.1f} m<extra></extra>'
     ))
 
+    # ── Antenna marker ────────────────────────────────────────────────────
     ant_elev = site_elev + h_m
     fig.add_trace(go.Scatter(
         x=[0], y=[ant_elev],
         mode='markers+text',
-        marker=dict(size=11, color='#0ea5e9', symbol='circle',
+        marker=dict(size=11, color='#ef4444', symbol='diamond',
                     line=dict(color='white', width=2)),
-        text=[f'Antenna {h_m:.0f} m AGL'],
-        textposition='top right',
-        textfont=dict(family='Inter', size=10, color='#0ea5e9'),
+        text=[f'Antenna {h_m:.0f} m AGL'], textposition='top right',
+        textfont=dict(family='Inter', size=10, color='#ef4444'),
         showlegend=False, name='Antenna',
         hovertemplate=f'Antenna<br>AGL: {h_m:.0f} m<br>MSL: {ant_elev:.1f} m<extra></extra>'
     ))
 
-    hit_elev = elev_at(main_d)
-    fig.add_trace(go.Scatter(
-        x=[main_d], y=[hit_elev],
-        mode='markers+text',
-        marker=dict(size=10, color='#0d9488', symbol='circle',
-                    line=dict(color='white', width=2)),
-        text=[f'Main hit: {fmt_d(main_d, units)}'],
-        textposition='top right',
-        textfont=dict(family='Inter', size=10, color='#0d9488'),
-        showlegend=False, name='Main lobe hit',
-        hovertemplate=f'Main hit: {fmt_d(main_d, units)}<extra></extra>'
-    ))
-
     fig.add_trace(go.Scatter(
         x=[0, 0], y=[site_elev, ant_elev],
-        line=dict(color='#0ea5e9', width=3),
+        line=dict(color='#ef4444', width=3),
         showlegend=False, name='_antline', hoverinfo='skip'
     ))
 
+    # ── Layout ────────────────────────────────────────────────────────────
+    title_txt = (f'Terrain Profile + Lobe Projection | '
+                 f'Az: {az_deg:.2f}° | Tilt: {dt_deg:.2f}° | '
+                 f'VB: {vbw_deg:.2f}° | Profile: {fmt_d(dist_m, units)}')
+
     fig.update_layout(
-        plot_bgcolor='#ffffff',
-        paper_bgcolor='#ffffff',
-        font=dict(family='Inter', color='#64748b', size=11),
-        margin=dict(l=55, r=20, t=40, b=50),
-        height=320,
+        plot_bgcolor='#0f172a',
+        paper_bgcolor='#1e293b',
+        font=dict(family='Inter', color='#94a3b8', size=11),
+        margin=dict(l=60, r=20, t=55, b=55),
+        height=340,
         legend=dict(
             orientation='h', yanchor='bottom', y=-0.28,
             xanchor='left', x=0,
-            font=dict(size=11, family='Inter', color='#64748b'),
+            font=dict(size=11, family='Inter', color='#cbd5e1'),
             bgcolor='rgba(0,0,0,0)', borderwidth=0,
         ),
         xaxis=dict(
-            title=dict(text='Distance (m)', font=dict(size=11, color='#94a3b8', family='Inter')),
-            gridcolor='rgba(0,0,0,0.06)', zerolinecolor='rgba(0,0,0,0.1)',
-            tickfont=dict(size=10, color='#94a3b8', family='JetBrains Mono'),
-            range=[0, dist_m], showline=True, linecolor='#dde3ec',
+            title=dict(text='Distance in meters', font=dict(size=11, color='#64748b', family='Inter')),
+            gridcolor='rgba(255,255,255,0.05)', zerolinecolor='rgba(255,255,255,0.10)',
+            tickfont=dict(size=10, color='#64748b', family='JetBrains Mono'),
+            range=[0, dist_m], showline=True, linecolor='#334155',
         ),
         yaxis=dict(
-            title=dict(text='Elevation (m)', font=dict(size=11, color='#94a3b8', family='Inter')),
-            gridcolor='rgba(0,0,0,0.06)', zerolinecolor='rgba(0,0,0,0.1)',
-            tickfont=dict(size=10, color='#94a3b8', family='JetBrains Mono'),
-            range=[y_min, y_max], showline=True, linecolor='#dde3ec',
+            title=dict(text='Elevation (m MSL)', font=dict(size=11, color='#64748b', family='Inter')),
+            gridcolor='rgba(255,255,255,0.05)', zerolinecolor='rgba(255,255,255,0.10)',
+            tickfont=dict(size=10, color='#64748b', family='JetBrains Mono'),
+            range=[y_min, y_max], showline=True, linecolor='#334155',
         ),
         hovermode='x unified',
-        hoverlabel=dict(bgcolor='#fff', bordercolor='#dde3ec',
-                        font=dict(family='JetBrains Mono', size=11, color='#1e293b')),
+        hoverlabel=dict(bgcolor='#1e293b', bordercolor='#334155',
+                        font=dict(family='JetBrains Mono', size=11, color='#e2e8f0')),
         annotations=[
-            dict(x=0.02, y=1.04, xref='paper', yref='paper', showarrow=False,
-                 text=f'Main hit: {fmt_d(main_d, units)}',
-                 font=dict(size=10, color='#64748b', family='Inter'), xanchor='left'),
-            dict(x=0.38, y=1.04, xref='paper', yref='paper', showarrow=False,
-                 text=f'Downtilt {dt_deg} deg | V-BW {vbw_deg} deg',
-                 font=dict(size=10, color='#64748b', family='Inter'), xanchor='center'),
-            dict(x=1.0, y=1.04, xref='paper', yref='paper', showarrow=False,
-                 text='Green=strong, yellow=weak, red=shadowed by terrain',
-                 font=dict(size=10, color='#64748b', family='Inter'), xanchor='right'),
+            dict(x=0.5, y=1.06, xref='paper', yref='paper', showarrow=False,
+                 text=title_txt,
+                 font=dict(size=11, color='#cbd5e1', family='Inter', weight=600),
+                 xanchor='center'),
         ]
     )
+    return fig
 
+
+# ─────────────────────────────────────────────────────
+# 2D LOBE PROJECTION CHART (dark theme)
+# ─────────────────────────────────────────────────────
+def build_lobe_chart(h_m, dt_deg, vbw_deg):
+    """Flat-earth 2D antenna lobe projection — triangular filled areas."""
+    far_angle = max(0.05, dt_deg - vbw_deg / 2)
+    far_d_f   = h_m / math.tan(math.radians(far_angle))
+    main_d_f  = h_m / math.tan(math.radians(dt_deg))
+    near_d_f  = h_m / math.tan(math.radians(dt_deg + vbw_deg / 2))
+    x_max     = far_d_f * 1.08
+
+    fig = go.Figure()
+
+    # Upper Lobe — blue (widest, rendered first/behind)
+    fig.add_trace(go.Scatter(
+        x=[0, far_d_f, main_d_f, 0],
+        y=[h_m, 0, 0, h_m],
+        fill='toself',
+        fillcolor='rgba(59,130,246,0.55)',
+        line=dict(color='rgba(59,130,246,0.85)', width=1.5),
+        name='Upper Lobe',
+        hoverinfo='skip'
+    ))
+
+    # Main Lobe — light red
+    fig.add_trace(go.Scatter(
+        x=[0, main_d_f, near_d_f, 0],
+        y=[h_m, 0, 0, h_m],
+        fill='toself',
+        fillcolor='rgba(248,113,113,0.55)',
+        line=dict(color='rgba(248,113,113,0.85)', width=1.5),
+        name='Main Lobe',
+        hoverinfo='skip'
+    ))
+
+    # Lower Lobe — light yellow (narrowest, rendered last/front)
+    fig.add_trace(go.Scatter(
+        x=[0, near_d_f, 0, 0],
+        y=[h_m, 0, 0, h_m],
+        fill='toself',
+        fillcolor='rgba(253,224,71,0.55)',
+        line=dict(color='rgba(253,224,71,0.85)', width=1.5),
+        name='Lower Lobe',
+        hoverinfo='skip'
+    ))
+
+    # Antenna marker (red diamond)
+    fig.add_trace(go.Scatter(
+        x=[0], y=[h_m],
+        mode='markers',
+        marker=dict(size=12, color='#ef4444', symbol='diamond',
+                    line=dict(color='white', width=1.5)),
+        name='Antenna',
+        hovertemplate=f'Antenna: {h_m:.0f} m AGL<extra></extra>'
+    ))
+
+    fig.update_layout(
+        title=dict(
+            text='Lobe Distance Projection',
+            font=dict(size=13, color='#e2e8f0', family='Inter', weight=700),
+            x=0.03, xanchor='left'
+        ),
+        plot_bgcolor='#0f172a',
+        paper_bgcolor='#1e293b',
+        font=dict(family='Inter', color='#94a3b8', size=11),
+        margin=dict(l=60, r=20, t=65, b=55),
+        height=380,
+        legend=dict(
+            orientation='v', yanchor='top', y=0.95, xanchor='right', x=0.98,
+            font=dict(size=11, family='Inter', color='#cbd5e1'),
+            bgcolor='rgba(0,0,0,0.35)', borderwidth=0,
+        ),
+        xaxis=dict(
+            title=dict(text='Distance (meters)', font=dict(size=11, color='#64748b', family='Inter')),
+            gridcolor='rgba(255,255,255,0.05)', zerolinecolor='rgba(255,255,255,0.10)',
+            tickfont=dict(size=10, color='#64748b', family='JetBrains Mono'),
+            range=[0, x_max], showline=True, linecolor='#334155',
+        ),
+        yaxis=dict(
+            title=dict(text='Antenna Height (m)', font=dict(size=11, color='#64748b', family='Inter')),
+            gridcolor='rgba(255,255,255,0.05)', zerolinecolor='rgba(255,255,255,0.10)',
+            tickfont=dict(size=10, color='#64748b', family='JetBrains Mono'),
+            range=[0, h_m * 1.18], showline=True, linecolor='#334155',
+        ),
+        annotations=[
+            dict(x=0.03, y=1.10, xref='paper', yref='paper', showarrow=False,
+                 text='Theoretical lobe distances relative to the antenna',
+                 font=dict(size=10, color='#64748b', family='Inter'), xanchor='left'),
+        ]
+    )
     return fig
 
 
@@ -471,8 +566,11 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
 # FOLIUM MAP
 # ─────────────────────────────────────────────────────
 def build_map(lat, lon, az, hbw, main_d, near_d, far_d, dem_d, dist_m):
-    m = folium.Map(location=[lat, lon], zoom_start=13,
-                   tiles='OpenStreetMap', control_scale=True)
+    m = folium.Map(
+        location=[lat, lon], zoom_start=13, control_scale=True,
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attr='Esri World Imagery'
+    )
     half, S = hbw/2, 72
     outer = [gc_dest(lat, lon, az - half + i*hbw/S, far_d)  for i in range(S+1)]
     inner = [gc_dest(lat, lon, az - half + i*hbw/S, near_d) for i in range(S, -1, -1)]
@@ -539,11 +637,8 @@ for k, v in [('dem_d', None), ('dem_elev', None),
 # HEADER
 # ─────────────────────────────────────────────────────
 
-# Show SRTM availability banner once
-if _SRTM_AVAILABLE:
-    _srtm_badge = '<span class="src-badge src-local">⚡ SRTM local cache active — no API calls needed</span>'
-else:
-    _srtm_badge = '<span class="src-badge src-cloud">☁ srtm library not found — pip install srtm.py</span>'
+# Show Copernicus DEM availability banner once
+_copernicus_badge = '<span class="src-badge src-local">🌍 Copernicus DEM 30m — primary elevation source</span>'
 
 st.markdown(f"""
 <div style="border-bottom:1px solid #dde3ec;padding-bottom:14px;margin-bottom:20px;">
@@ -551,7 +646,7 @@ st.markdown(f"""
     <div style="width:30px;height:30px;background:#0ea5e9;border-radius:7px;display:flex;
                 align-items:center;justify-content:center;font-size:15px;color:#fff;">📡</div>
     <span style="font-size:1.2rem;font-weight:700;color:#1e293b;">Antenna Downtilt Calculator</span>
-    {_srtm_badge}
+    {_copernicus_badge}
   </div>
   <div style="padding-left:40px;font-size:0.8rem;color:#64748b;">
     Calculate main lobe impact and ground footprint with an interactive RF visual.
@@ -592,22 +687,14 @@ with st.sidebar:
         az_deg   = st.number_input("Antenna Azimuth (deg)", min_value=0.0, max_value=360.0, value=80.0, step=1.0)
 
         # Show which source will be used
-        if _SRTM_AVAILABLE:
-            st.markdown(
-                "<div style='font-size:0.68rem;color:#15803d;background:#dcfce7;"
-                "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
-                "⚡ Will use local SRTM tiles (offline-capable)</div>",
-                unsafe_allow_html=True)
-        else:
-            st.markdown(
-                "<div style='font-size:0.68rem;color:#92400e;background:#fef3c7;"
-                "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
-                "☁ Will use Open-Meteo API (install srtm.py to go offline)</div>",
-                unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:0.68rem;color:#15803d;background:#dcfce7;"
+            "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
+            "🌍 Will use Copernicus DEM 30m via Open-Meteo API</div>",
+            unsafe_allow_html=True)
 
         if st.button("↻ Fetch Elevation Profile", type="primary", use_container_width=True):
-            src_label = "SRTM (local)" if _SRTM_AVAILABLE else "cloud API"
-            with st.spinner(f"Loading elevation via {src_label}…"):
+            with st.spinner("Loading Copernicus DEM 30m elevation…"):
                 try:
                     d_arr, e_arr, source = fetch_dem(site_lat, site_lon, az_deg, dist_m, n=100)
                     st.session_state.dem_d      = d_arr
@@ -684,8 +771,8 @@ if has_dem and terrain_on:
 # ─────────────────────────────────────────────────────
 s      = st.session_state.dem_status
 src    = st.session_state.dem_source
-if src == "SRTM (local)":
-    src_html = '<span class="src-badge src-local">SRTM local</span>'
+if src == "Copernicus DEM 30m":
+    src_html = '<span class="src-badge src-local">Copernicus DEM 30m</span>'
 elif src:
     src_html = '<span class="src-badge src-cloud">cloud API</span>'
 else:
@@ -761,20 +848,29 @@ ci2.metric("⛰ Terrain Elev", f"{sl_elev:.1f} m MSL" if has_dem else "—")
 ci3.metric("📶 Footprint",    "✓ Inside" if in_foot else "✗ Outside")
 
 fig = build_chart(h_m, dt_deg, vbw, dist_m, main_d, near_d, far_d,
-                  dem_d, dem_elev, slider_d, units)
+                  dem_d, dem_elev, slider_d, units, az_deg=az_deg)
 st.plotly_chart(fig, use_container_width=True,
                 config={'displayModeBar': True, 'displaylogo': False})
 
 # ─────────────────────────────────────────────────────
-# SECTOR MAP
+# GRID ROW: Sector Map (Esri Satellite) + Lobe Projection
 # ─────────────────────────────────────────────────────
-st.markdown('<div class="sec-hdr">Sector Map (OSM)</div>', unsafe_allow_html=True)
-st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth, and auto-adjusted distance.")
+map_col, lobe_col = st.columns(2, gap="medium")
 
-map_obj  = build_map(site_lat, site_lon, az_deg, hbw, main_d, near_d, far_d, dem_d, dist_m)
-map_data = st_folium(map_obj, width="100%", height=380,
-                     returned_objects=["last_clicked"],
-                     key="sector_map")
+with map_col:
+    st.markdown('<div class="sec-hdr">① Sector Map (Esri Satellite)</div>', unsafe_allow_html=True)
+    st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth, and auto-adjusted distance.")
+    map_obj  = build_map(site_lat, site_lon, az_deg, hbw, main_d, near_d, far_d, dem_d, dist_m)
+    map_data = st_folium(map_obj, width="100%", height=380,
+                         returned_objects=["last_clicked"],
+                         key="sector_map")
+
+with lobe_col:
+    st.markdown('<div class="sec-hdr">② Lobe Projection</div>', unsafe_allow_html=True)
+    st.caption("Theoretical lobe distances relative to the antenna.")
+    lobe_fig = build_lobe_chart(h_m, dt_deg, vbw)
+    st.plotly_chart(lobe_fig, use_container_width=True,
+                    config={'displayModeBar': False, 'displaylogo': False})
 
 _clicked = (map_data or {}).get("last_clicked")
 if _clicked and _clicked.get("lat") is not None:
