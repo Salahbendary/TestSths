@@ -578,7 +578,7 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         hoverlabel=dict(bgcolor='#1e293b', bordercolor='#334155',
                         font=dict(family='JetBrains Mono', size=11, color='#e2e8f0')),
         annotations=[
-            dict(x=0.5, y=1.04, xref='paper', yref='paper', showarrow=False,
+            dict(x=0.5, y=1.06, xref='paper', yref='paper', showarrow=False,
                  text=title_txt,
                  font=dict(size=11, color='#cbd5e1', family='Inter', weight=600),
                  xanchor='center'),
@@ -716,6 +716,7 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
                 line=dict(color=col, width=2),
                 name=lbl,
                 hovertemplate=(
+                    f'<b>{emoji} {lbl.split("(")[0].strip()}</b><br>'
                     'Rel. height: %{y:.1f} m<br>'
                     f'Ground hit: {fmt_d(hit_x, units)}'
                     '<extra></extra>'
@@ -816,6 +817,7 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
                 line=dict(color='rgba(0,0,0,0)', width=10),
                 showlegend=False,
                 hovertemplate=(
+                    f'<b>{emoji} {lbl}</b><br>'
                     'Height: %{y:.1f} m<br>'
                     f'Ground hit: {fmt_d(d_hit, units)}'
                     '<extra></extra>'
@@ -1264,7 +1266,7 @@ map_col, lobe_col = st.columns(2, gap="medium")
 
 with map_col:
     st.markdown('<div class="sec-hdr">① Sector Map (Esri Satellite)</div>', unsafe_allow_html=True)
-    st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth.")
+    st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth, and auto-adjusted distance.")
     map_obj  = build_map(site_lat, site_lon, az_deg, hbw, main_d, near_d, far_d, dem_d, dist_m)
     map_data = st_folium(map_obj, width="100%", height=380,
                          returned_objects=["last_clicked"],
