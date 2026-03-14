@@ -1,7 +1,8 @@
 """
 Antenna Downtilt Calculator — Streamlit
-Elevation: SRTM1 30m local cache (srtm.py) — offline, free, no API key needed
-Fallback: Open-Elevation cloud API
+Elevation: Copernicus DEM GLO-30 (30 m) — offline tiles, free, no API key
+           Auto-downloads from AWS public S3 on first use → ~/.copdem30/
+Fallback:  SRTM1 (srtm.py) → Open-Elevation cloud
 """
 
 import streamlit as st
@@ -10,13 +11,99 @@ import requests
 import plotly.graph_objects as go
 import folium
 from streamlit_folium import st_folium
-import zipfile, io, math
+import zipfile, io, math, pathlib
 import time
 
-# ── SRTM1 30m local elevation (auto-downloaded once, cached on disk) ─────────
-# srtm.py library: pip install srtm.py
-# SRTM1 = 1 arc-second ≈ 30 m resolution  (same as Copernicus DEM GLO-30)
-# Tiles download automatically on first call → ~/.srtm/ → fully offline after.
+# ─────────────────────────────────────────────────────────────────────────────
+# Copernicus DEM GLO-30  (primary — 30 m, free, no API key, offline after 1st
+# download)
+#
+# Tiles are Cloud-Optimised GeoTIFFs hosted on the public AWS bucket:
+#   s3://copernicus-dem-30m/  (anonymous access — no credentials)
+# Each 1°×1° tile covers Egypt perfectly.  Tile size: ~5–15 MB.
+# After the first profile fetch, tiles live in ~/.copdem30/ and work offline.
+#
+# Requirements:  pip install rasterio
+# ─────────────────────────────────────────────────────────────────────────────
+try:
+    import rasterio
+    from rasterio.windows import Window as _RioWin
+    _RASTERIO_AVAILABLE = True
+except ImportError:
+    _RASTERIO_AVAILABLE = False
+
+_COPDEM_CACHE = pathlib.Path.home() / ".copdem30"
+
+def _copdem_name(lat_f: int, lon_f: int) -> str:
+    ns  = "N" if lat_f >= 0 else "S"
+    ew  = "E" if lon_f >= 0 else "W"
+    return (f"Copernicus_DSM_COG_10_{ns}{abs(lat_f):02d}_00"
+            f"_{ew}{abs(lon_f):03d}_00_DEM")
+
+def _copdem_url(lat_f: int, lon_f: int) -> str:
+    name = _copdem_name(lat_f, lon_f)
+    return (f"https://copernicus-dem-30m.s3.amazonaws.com"
+            f"/{name}/{name}_DEM.tif")
+
+def _copdem_path(lat_f: int, lon_f: int) -> pathlib.Path:
+    return _COPDEM_CACHE / f"{_copdem_name(lat_f, lon_f)}.tif"
+
+def _copdem_download_tile(lat_f: int, lon_f: int) -> pathlib.Path:
+    """Download one Copernicus DEM GLO-30 tile (~5-15 MB) from public AWS S3."""
+    _COPDEM_CACHE.mkdir(parents=True, exist_ok=True)
+    path = _copdem_path(lat_f, lon_f)
+    url  = _copdem_url(lat_f, lon_f)
+    r = requests.get(url, timeout=60, stream=True)
+    r.raise_for_status()
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "wb") as f:
+        for chunk in r.iter_content(65536):
+            f.write(chunk)
+    tmp.rename(path)
+    return path
+
+def _elev_copdem30(lats, lons):
+    """
+    Query Copernicus DEM GLO-30 (30 m) elevation.
+    Tiles auto-download from public AWS S3 on first call, then serve offline.
+    Requires: pip install rasterio
+    """
+    if not _RASTERIO_AVAILABLE:
+        raise RuntimeError("rasterio not available — pip install rasterio")
+
+    result     = []
+    open_tiles = {}          # (lat_floor, lon_floor) → open rasterio.DatasetReader
+
+    try:
+        for lat, lon in zip(lats, lons):
+            lat_f = int(math.floor(lat))
+            lon_f = int(math.floor(lon))
+            key   = (lat_f, lon_f)
+
+            if key not in open_tiles:
+                tpath = _copdem_path(lat_f, lon_f)
+                if not tpath.exists():
+                    _copdem_download_tile(lat_f, lon_f)
+                open_tiles[key] = rasterio.open(tpath)
+
+            ds  = open_tiles[key]
+            row, col = ds.index(lon, lat)
+            row = max(0, min(row, ds.height - 1))
+            col = max(0, min(col, ds.width  - 1))
+            val = float(ds.read(1, window=_RioWin(col, row, 1, 1))[0, 0])
+            nd  = ds.nodata if ds.nodata is not None else -9999.0
+            result.append(val if (val != nd and not math.isnan(val)) else 0.0)
+    finally:
+        for ds in open_tiles.values():
+            try: ds.close()
+            except Exception: pass
+
+    return result
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SRTM1 30m  (secondary offline fallback — used when rasterio is not installed)
+# pip install srtm.py
+# ─────────────────────────────────────────────────────────────────────────────
 try:
     import srtm as _srtm_lib
     _SRTM_AVAILABLE = True
@@ -25,16 +112,11 @@ except ImportError:
 
 @st.cache_resource(show_spinner=False)
 def _load_srtm1():
-    """Load SRTM1 (30 m) data object once per session.
-    Tiles are ~1 MB each and cached in ~/.srtm/ after first download."""
     if not _SRTM_AVAILABLE:
         return None
-    # srtm1=True → 1 arc-second (~30 m) tiles — same resolution as Copernicus DEM
     return _srtm_lib.get_data(srtm1=True)
 
 def _elev_srtm1(lats, lons):
-    """Query SRTM1 30 m elevation for lists of lat/lon.
-    Returns list of floats; NaN values fall back to 0.0."""
     data = _load_srtm1()
     if data is None:
         raise RuntimeError("srtm library not available")
@@ -44,9 +126,8 @@ def _elev_srtm1(lats, lons):
         result.append(float(e) if e is not None else 0.0)
     return result
 
-# ── Open-Elevation — free cloud fallback (no API key, no rate limits) ────────
+# ── Open-Elevation — free cloud last-resort (no API key) ─────────────────────
 def _elev_open_elevation(lats, lons):
-    """Free REST fallback — open-elevation.com  (no sign-up, no key)."""
     locations = [{"latitude": la, "longitude": lo}
                  for la, lo in zip(lats, lons)]
     r = requests.post(
@@ -202,7 +283,10 @@ def gc_dest(lat, lon, bearing, dist_m):
     return math.degrees(la2), math.degrees(lo2)
 
 # ─────────────────────────────────────────────────────
-# ELEVATION FETCH  — SRTM1 30m offline primary, Open-Elevation cloud fallback
+# ELEVATION FETCH
+# Priority: 1. Copernicus DEM GLO-30 (rasterio, offline)
+#           2. SRTM1 30m (srtm.py, offline fallback)
+#           3. Open-Elevation cloud (last resort)
 # ─────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)
@@ -210,12 +294,14 @@ def fetch_dem(lat, lon, az, dist_m, n=100):
     """
     Fetch elevation profile along a great-circle path.
 
-    Priority:
-      1. SRTM1 (srtm.py)  — 1 arc-second ≈ 30 m resolution.
-         Tiles download automatically on first call (~1 MB each) and are
-         cached on disk in ~/.srtm/.  Works fully offline afterwards.
-         Free, no API key, no rate limits. Best coverage for Egypt.
-      2. Open-Elevation REST API  — free cloud fallback, no key needed.
+    Source priority:
+      1. Copernicus DEM GLO-30 (rasterio) — 30 m, free, no API key.
+         1°×1° tiles auto-download from AWS public S3 (~5-15 MB each) on
+         first call and are cached in ~/.copdem30/.  Fully offline after.
+         Best accuracy for Egypt. Requires: pip install rasterio
+      2. SRTM1 30m (srtm.py) — 30 m, free, offline-capable fallback.
+         Requires: pip install srtm.py
+      3. Open-Elevation REST API — free cloud API, no key needed.
 
     Returns (distances_m array, elevations_m array, source_label)
     """
@@ -225,15 +311,27 @@ def fetch_dem(lat, lon, az, dist_m, n=100):
         lats.append(round(p[0], 7))
         lons.append(round(p[1], 7))
 
-    # ── 1. SRTM1 local tile cache (30 m, free, offline-capable) ──────────
+    # ── 1. Copernicus DEM GLO-30 offline tiles (best accuracy) ───────────
+    if _RASTERIO_AVAILABLE:
+        try:
+            elevs = _elev_copdem30(lats, lons)
+            return (np.linspace(0, dist_m, n),
+                    np.array(elevs, dtype=float),
+                    "Copernicus DEM GLO-30 (local)")
+        except Exception:
+            pass   # fall through
+
+    # ── 2. SRTM1 30m offline tiles (fallback if rasterio not installed) ──
     if _SRTM_AVAILABLE:
         try:
             elevs = _elev_srtm1(lats, lons)
-            return np.linspace(0, dist_m, n), np.array(elevs, dtype=float), "SRTM1 30m (local)"
+            return (np.linspace(0, dist_m, n),
+                    np.array(elevs, dtype=float),
+                    "SRTM1 30m (local)")
         except Exception:
-            pass  # fall through to cloud
+            pass   # fall through
 
-    # ── 2. Open-Elevation free cloud fallback ────────────────────────────
+    # ── 3. Open-Elevation free cloud API (last resort) ────────────────────
     CHUNK  = 25
     elevs  = []
     source = "Open-Elevation (cloud)"
@@ -242,8 +340,7 @@ def fetch_dem(lat, lon, az, dist_m, n=100):
         lon_c = lons[start: start + CHUNK]
         try:
             elevs.extend(_elev_open_elevation(lat_c, lon_c))
-        except Exception as ex:
-            # If open-elevation also fails, fill with zeros so app doesn't crash
+        except Exception:
             elevs.extend([0.0] * len(lat_c))
         if start + CHUNK < n:
             time.sleep(0.15)
@@ -663,7 +760,14 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg):
             dict(x=0.03, y=1.10, xref='paper', yref='paper', showarrow=False,
                  text='Theoretical lobe distances relative to the antenna',
                  font=dict(size=10, color='#64748b', family='Inter'), xanchor='left'),
-        ]
+        ],
+        hovermode='closest',
+        hoverlabel=dict(
+            bgcolor='#1e293b',
+            bordercolor='#334155',
+            font=dict(family='JetBrains Mono', size=11, color='#e2e8f0'),
+            align='left',
+        ),
     )
     return fig
 
@@ -744,10 +848,24 @@ for k, v in [('dem_d', None), ('dem_elev', None),
 # ─────────────────────────────────────────────────────
 
 # Show elevation source banner once
-if _SRTM_AVAILABLE:
-    _copernicus_badge = '<span class="src-badge src-local">⚡ SRTM1 30m local cache active — offline, free, no API key</span>'
+if _RASTERIO_AVAILABLE:
+    _copernicus_badge = (
+        '<span class="src-badge src-local">'
+        '🌍 Copernicus DEM GLO-30 — offline tiles, 30 m, no API key'
+        '</span>'
+    )
+elif _SRTM_AVAILABLE:
+    _copernicus_badge = (
+        '<span class="src-badge src-local">'
+        '⚡ SRTM1 30m local — install rasterio for Copernicus DEM'
+        '</span>'
+    )
 else:
-    _copernicus_badge = '<span class="src-badge src-cloud">☁ srtm library not found — pip install srtm.py</span>'
+    _copernicus_badge = (
+        '<span class="src-badge src-cloud">'
+        '☁ Cloud elevation — pip install rasterio for offline Copernicus DEM'
+        '</span>'
+    )
 
 st.markdown(f"""
 <div style="border-bottom:1px solid #dde3ec;padding-bottom:14px;margin-bottom:20px;">
@@ -796,22 +914,34 @@ with st.sidebar:
         az_deg   = st.number_input("Antenna Azimuth (deg)", min_value=0.0, max_value=360.0, value=80.0, step=1.0)
 
         # Show which source will be used
-        if _SRTM_AVAILABLE:
+        if _RASTERIO_AVAILABLE:
             st.markdown(
                 "<div style='font-size:0.68rem;color:#15803d;background:#dcfce7;"
                 "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
-                "⚡ SRTM1 30 m tiles — offline after first download (≈1 MB/tile)</div>",
+                "🌍 <b>Copernicus DEM GLO-30</b> — 30 m offline tiles<br>"
+                "Tiles auto-download to <code>~/.copdem30/</code> on first fetch</div>",
+                unsafe_allow_html=True)
+        elif _SRTM_AVAILABLE:
+            st.markdown(
+                "<div style='font-size:0.68rem;color:#15803d;background:#dcfce7;"
+                "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
+                "⚡ SRTM1 30m tiles — <code>pip install rasterio</code> for Copernicus DEM</div>",
                 unsafe_allow_html=True)
         else:
             st.markdown(
                 "<div style='font-size:0.68rem;color:#92400e;background:#fef3c7;"
                 "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
-                "☁ srtm library not found — will use Open-Elevation cloud API<br>"
-                "<code>pip install srtm.py</code> for offline 30 m tiles</div>",
+                "☁ Will use Open-Elevation cloud API<br>"
+                "<code>pip install rasterio</code> for offline Copernicus DEM GLO-30</div>",
                 unsafe_allow_html=True)
 
         if st.button("↻ Fetch Elevation Profile", type="primary", use_container_width=True):
-            src_label = "SRTM1 30m (local)" if _SRTM_AVAILABLE else "Open-Elevation (cloud)"
+            if _RASTERIO_AVAILABLE:
+                src_label = "Copernicus DEM GLO-30 (local)"
+            elif _SRTM_AVAILABLE:
+                src_label = "SRTM1 30m (local)"
+            else:
+                src_label = "Open-Elevation (cloud)"
             with st.spinner(f"Loading elevation via {src_label}…"):
                 try:
                     d_arr, e_arr, source = fetch_dem(site_lat, site_lon, az_deg, dist_m, n=100)
@@ -889,7 +1019,9 @@ if has_dem and terrain_on:
 # ─────────────────────────────────────────────────────
 s      = st.session_state.dem_status
 src    = st.session_state.dem_source
-if src == "SRTM1 30m (local)":
+if src == "Copernicus DEM GLO-30 (local)":
+    src_html = '<span class="src-badge src-local">Copernicus DEM GLO-30</span>'
+elif src == "SRTM1 30m (local)":
     src_html = '<span class="src-badge src-local">SRTM1 30m local</span>'
 elif src:
     src_html = '<span class="src-badge src-cloud">cloud API</span>'
@@ -996,7 +1128,7 @@ map_col, lobe_col = st.columns(2, gap="medium")
 
 with map_col:
     st.markdown('<div class="sec-hdr">① Sector Map (Esri Satellite)</div>', unsafe_allow_html=True)
-    st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth.")
+    st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth, and auto-adjusted distance.")
     map_obj  = build_map(site_lat, site_lon, az_deg, hbw, main_d, near_d, far_d, dem_d, dist_m)
     map_data = st_folium(map_obj, width="100%", height=380,
                          returned_objects=["last_clicked"],
