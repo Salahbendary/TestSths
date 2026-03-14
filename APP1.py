@@ -996,7 +996,7 @@ map_col, lobe_col = st.columns(2, gap="medium")
 
 with map_col:
     st.markdown('<div class="sec-hdr">① Sector Map (Esri Satellite)</div>', unsafe_allow_html=True)
-    st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth, and auto-adjusted distance.")
+    st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth.")
     map_obj  = build_map(site_lat, site_lon, az_deg, hbw, main_d, near_d, far_d, dem_d, dist_m)
     map_data = st_folium(map_obj, width="100%", height=380,
                          returned_objects=["last_clicked"],
