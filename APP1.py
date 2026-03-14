@@ -534,8 +534,8 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
                     line=dict(color='white', width=2)),
         text=[f'Antenna {h_m:.0f} m AGL'], textposition='top right',
         textfont=dict(family='Inter', size=10, color='#ef4444'),
-        showlegend=False, name='Antenna',
-        hovertemplate=f'Antenna<br>AGL: {h_m:.0f} m<br>MSL: {ant_elev:.1f} m<extra></extra>'
+        showlegend=False, name='Antenna'
+       
     ))
 
     fig.add_trace(go.Scatter(
