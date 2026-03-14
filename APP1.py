@@ -900,7 +900,7 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
             align='left',
         ),
         annotations=[
-            dict(x=0.5, y=1.07, xref='paper', yref='paper', showarrow=False,
+            dict(x=0.5, y=1.04, xref='paper', yref='paper', showarrow=False,
                  text=title_txt,
                  font=dict(size=12, color='#e2e8f0', family='Inter', weight=700),
                  xanchor='center'),
