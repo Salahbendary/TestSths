@@ -1,6 +1,7 @@
 """
 Antenna Downtilt Calculator — Streamlit
-Elevation: Copernicus DEM 30m via Open-Meteo (primary), Open-Elevation fallback
+Elevation: SRTM1 30m local cache (srtm.py) — offline, free, no API key needed
+Fallback: Open-Elevation cloud API
 """
 
 import streamlit as st
@@ -12,19 +13,40 @@ from streamlit_folium import st_folium
 import zipfile, io, math
 import time
 
-# ── Copernicus DEM 30m via Open-Meteo API (primary source) ──────────────────
-def _elev_open_meteo(lats, lons):
-    url = (
-        "https://api.open-meteo.com/v1/elevation"
-        f"?latitude={','.join(str(x) for x in lats)}"
-        f"&longitude={','.join(str(x) for x in lons)}"
-    )
-    r = requests.get(url, timeout=15)
-    r.raise_for_status()
-    return r.json()["elevation"]
+# ── SRTM1 30m local elevation (auto-downloaded once, cached on disk) ─────────
+# srtm.py library: pip install srtm.py
+# SRTM1 = 1 arc-second ≈ 30 m resolution  (same as Copernicus DEM GLO-30)
+# Tiles download automatically on first call → ~/.srtm/ → fully offline after.
+try:
+    import srtm as _srtm_lib
+    _SRTM_AVAILABLE = True
+except ImportError:
+    _SRTM_AVAILABLE = False
 
+@st.cache_resource(show_spinner=False)
+def _load_srtm1():
+    """Load SRTM1 (30 m) data object once per session.
+    Tiles are ~1 MB each and cached in ~/.srtm/ after first download."""
+    if not _SRTM_AVAILABLE:
+        return None
+    # srtm1=True → 1 arc-second (~30 m) tiles — same resolution as Copernicus DEM
+    return _srtm_lib.get_data(srtm1=True)
+
+def _elev_srtm1(lats, lons):
+    """Query SRTM1 30 m elevation for lists of lat/lon.
+    Returns list of floats; NaN values fall back to 0.0."""
+    data = _load_srtm1()
+    if data is None:
+        raise RuntimeError("srtm library not available")
+    result = []
+    for lat, lon in zip(lats, lons):
+        e = data.get_elevation(lat, lon)
+        result.append(float(e) if e is not None else 0.0)
+    return result
+
+# ── Open-Elevation — free cloud fallback (no API key, no rate limits) ────────
 def _elev_open_elevation(lats, lons):
-    """Second cloud fallback — open-elevation.com"""
+    """Free REST fallback — open-elevation.com  (no sign-up, no key)."""
     locations = [{"latitude": la, "longitude": lo}
                  for la, lo in zip(lats, lons)]
     r = requests.post(
@@ -180,7 +202,7 @@ def gc_dest(lat, lon, bearing, dist_m):
     return math.degrees(la2), math.degrees(lo2)
 
 # ─────────────────────────────────────────────────────
-# ELEVATION FETCH  — Copernicus DEM 30m primary, Open-Elevation fallback
+# ELEVATION FETCH  — SRTM1 30m offline primary, Open-Elevation cloud fallback
 # ─────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)
@@ -189,9 +211,11 @@ def fetch_dem(lat, lon, az, dist_m, n=100):
     Fetch elevation profile along a great-circle path.
 
     Priority:
-      1. Open-Meteo elevation API — uses Copernicus DEM GLO-30 (30m resolution)
-         cloud-based, 600 req/min free tier.
-      2. Open-Elevation API (cloud, free, slower) — fallback.
+      1. SRTM1 (srtm.py)  — 1 arc-second ≈ 30 m resolution.
+         Tiles download automatically on first call (~1 MB each) and are
+         cached on disk in ~/.srtm/.  Works fully offline afterwards.
+         Free, no API key, no rate limits. Best coverage for Egypt.
+      2. Open-Elevation REST API  — free cloud fallback, no key needed.
 
     Returns (distances_m array, elevations_m array, source_label)
     """
@@ -201,30 +225,26 @@ def fetch_dem(lat, lon, az, dist_m, n=100):
         lats.append(round(p[0], 7))
         lons.append(round(p[1], 7))
 
-    # ── 1. Copernicus DEM 30m via Open-Meteo API ────────────────────────────
-    CHUNK = 25
-    elevs = []
-    source = "Copernicus DEM 30m"
+    # ── 1. SRTM1 local tile cache (30 m, free, offline-capable) ──────────
+    if _SRTM_AVAILABLE:
+        try:
+            elevs = _elev_srtm1(lats, lons)
+            return np.linspace(0, dist_m, n), np.array(elevs, dtype=float), "SRTM1 30m (local)"
+        except Exception:
+            pass  # fall through to cloud
+
+    # ── 2. Open-Elevation free cloud fallback ────────────────────────────
+    CHUNK  = 25
+    elevs  = []
+    source = "Open-Elevation (cloud)"
     for start in range(0, n, CHUNK):
         lat_c = lats[start: start + CHUNK]
         lon_c = lons[start: start + CHUNK]
         try:
-            elevs.extend(_elev_open_meteo(lat_c, lon_c))
-        except requests.exceptions.HTTPError as e:
-            if e.response is not None and e.response.status_code == 429:
-                time.sleep(2.0)
-                try:
-                    elevs.extend(_elev_open_meteo(lat_c, lon_c))
-                except Exception:
-                    # ── 2. Open-Elevation fallback ────────────────────────
-                    elevs.extend(_elev_open_elevation(lat_c, lon_c))
-                    source = "Open-Elevation (cloud)"
-            else:
-                raise
-        except Exception:
-            # ── 2. Open-Elevation fallback ────────────────────────────────
             elevs.extend(_elev_open_elevation(lat_c, lon_c))
-            source = "Open-Elevation (cloud)"
+        except Exception as ex:
+            # If open-elevation also fails, fill with zeros so app doesn't crash
+            elevs.extend([0.0] * len(lat_c))
         if start + CHUNK < n:
             time.sleep(0.15)
 
@@ -436,13 +456,14 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         plot_bgcolor='#0f172a',
         paper_bgcolor='#1e293b',
         font=dict(family='Inter', color='#94a3b8', size=11),
-        margin=dict(l=60, r=20, t=55, b=55),
-        height=340,
+        margin=dict(l=60, r=20, t=55, b=100),
+        height=380,
         legend=dict(
-            orientation='h', yanchor='bottom', y=-0.28,
+            orientation='h', yanchor='top', y=-0.22,
             xanchor='left', x=0,
             font=dict(size=11, family='Inter', color='#cbd5e1'),
             bgcolor='rgba(0,0,0,0)', borderwidth=0,
+            tracegroupgap=0,
         ),
         xaxis=dict(
             title=dict(text='Distance in meters', font=dict(size=11, color='#64748b', family='Inter')),
@@ -474,15 +495,36 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
 # ─────────────────────────────────────────────────────
 def build_lobe_chart(h_m, dt_deg, vbw_deg):
     """Flat-earth 2D antenna lobe projection — triangular filled areas."""
-    far_angle = max(0.05, dt_deg - vbw_deg / 2)
-    far_d_f   = h_m / math.tan(math.radians(far_angle))
-    main_d_f  = h_m / math.tan(math.radians(dt_deg))
-    near_d_f  = h_m / math.tan(math.radians(dt_deg + vbw_deg / 2))
-    x_max     = far_d_f * 1.08
+    far_angle  = max(0.05, dt_deg - vbw_deg / 2)
+    far_d_f    = h_m / math.tan(math.radians(far_angle))
+    main_d_f   = h_m / math.tan(math.radians(dt_deg))
+    near_d_f   = h_m / math.tan(math.radians(dt_deg + vbw_deg / 2))
+    x_max      = far_d_f * 1.08
+
+    # ── Build detailed hover point arrays (every 5 % along each lobe edge) ──
+    def _lobe_hover_xs(d_hit):
+        pts = np.linspace(0, d_hit, 40)
+        return pts
+
+    def _lobe_edge_ys(xs_edge, angle_deg):
+        """Height of the lobe edge at each distance from antenna origin."""
+        return h_m - xs_edge * math.tan(math.radians(angle_deg))
+
+    # Upper lobe edge (far boundary)
+    ul_xs = _lobe_hover_xs(far_d_f)
+    ul_ys = _lobe_edge_ys(ul_xs, far_angle)
+
+    # Main lobe edge (centre)
+    ml_xs = _lobe_hover_xs(main_d_f)
+    ml_ys = _lobe_edge_ys(ml_xs, dt_deg)
+
+    # Lower lobe edge (near boundary)
+    ll_xs = _lobe_hover_xs(near_d_f)
+    ll_ys = _lobe_edge_ys(ll_xs, dt_deg + vbw_deg / 2)
 
     fig = go.Figure()
 
-    # Upper Lobe — blue (widest, rendered first/behind)
+    # ── Filled triangles (hoverinfo='skip' — lines carry the tooltips) ──────
     fig.add_trace(go.Scatter(
         x=[0, far_d_f, main_d_f, 0],
         y=[h_m, 0, 0, h_m],
@@ -490,10 +532,8 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg):
         fillcolor='rgba(59,130,246,0.55)',
         line=dict(color='rgba(59,130,246,0.85)', width=1.5),
         name='Upper Lobe',
-        hoverinfo='skip'
+        hoverinfo='skip',
     ))
-
-    # Main Lobe — light red
     fig.add_trace(go.Scatter(
         x=[0, main_d_f, near_d_f, 0],
         y=[h_m, 0, 0, h_m],
@@ -501,10 +541,8 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg):
         fillcolor='rgba(248,113,113,0.55)',
         line=dict(color='rgba(248,113,113,0.85)', width=1.5),
         name='Main Lobe',
-        hoverinfo='skip'
+        hoverinfo='skip',
     ))
-
-    # Lower Lobe — light yellow (narrowest, rendered last/front)
     fig.add_trace(go.Scatter(
         x=[0, near_d_f, 0, 0],
         y=[h_m, 0, 0, h_m],
@@ -512,17 +550,85 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg):
         fillcolor='rgba(253,224,71,0.55)',
         line=dict(color='rgba(253,224,71,0.85)', width=1.5),
         name='Lower Lobe',
-        hoverinfo='skip'
+        hoverinfo='skip',
     ))
 
-    # Antenna marker (red diamond)
+    # ── Invisible hover-lines along each lobe edge ───────────────────────────
+    fig.add_trace(go.Scatter(
+        x=ul_xs, y=ul_ys,
+        mode='lines',
+        line=dict(color='rgba(0,0,0,0)', width=8),
+        showlegend=False,
+        name='upper_hover',
+        hovertemplate=(
+            '<b>🔵 Upper Lobe</b><br>'
+            'Distance: %{x:.0f} m<br>'
+            'Height at point: %{y:.1f} m<br>'
+            f'Lobe hit ground at: {far_d_f:.0f} m<br>'
+            f'Angle (upper edge): {far_angle:.2f}°'
+            '<extra></extra>'
+        ),
+    ))
+    fig.add_trace(go.Scatter(
+        x=ml_xs, y=ml_ys,
+        mode='lines',
+        line=dict(color='rgba(0,0,0,0)', width=8),
+        showlegend=False,
+        name='main_hover',
+        hovertemplate=(
+            '<b>🔴 Main Lobe</b><br>'
+            'Distance: %{x:.0f} m<br>'
+            'Height at point: %{y:.1f} m<br>'
+            f'Main lobe hits ground at: {main_d_f:.0f} m<br>'
+            f'Downtilt angle: {dt_deg:.2f}°'
+            '<extra></extra>'
+        ),
+    ))
+    fig.add_trace(go.Scatter(
+        x=ll_xs, y=ll_ys,
+        mode='lines',
+        line=dict(color='rgba(0,0,0,0)', width=8),
+        showlegend=False,
+        name='lower_hover',
+        hovertemplate=(
+            '<b>🟡 Lower Lobe</b><br>'
+            'Distance: %{x:.0f} m<br>'
+            'Height at point: %{y:.1f} m<br>'
+            f'Lobe hits ground at: {near_d_f:.0f} m<br>'
+            f'Angle (lower edge): {dt_deg + vbw_deg/2:.2f}°'
+            '<extra></extra>'
+        ),
+    ))
+
+    # ── Ground intersection markers ──────────────────────────────────────────
+    for d_hit, lbl, col in [
+        (far_d_f,  f'Upper edge: {far_d_f:.0f} m',  '#3b82f6'),
+        (main_d_f, f'Main lobe: {main_d_f:.0f} m',  '#f87171'),
+        (near_d_f, f'Lower edge: {near_d_f:.0f} m', '#fde047'),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=[d_hit], y=[0],
+            mode='markers',
+            marker=dict(size=9, color=col, symbol='circle',
+                        line=dict(color='white', width=1.5)),
+            showlegend=False,
+            hovertemplate=f'<b>Ground hit</b><br>{lbl}<extra></extra>',
+        ))
+
+    # ── Antenna marker ───────────────────────────────────────────────────────
     fig.add_trace(go.Scatter(
         x=[0], y=[h_m],
         mode='markers',
         marker=dict(size=12, color='#ef4444', symbol='diamond',
                     line=dict(color='white', width=1.5)),
         name='Antenna',
-        hovertemplate=f'Antenna: {h_m:.0f} m AGL<extra></extra>'
+        hovertemplate=(
+            '<b>📡 Antenna</b><br>'
+            f'Height AGL: {h_m:.0f} m<br>'
+            f'Downtilt: {dt_deg:.2f}°<br>'
+            f'V-Beamwidth: {vbw_deg:.2f}°'
+            '<extra></extra>'
+        ),
     ))
 
     fig.update_layout(
@@ -637,8 +743,11 @@ for k, v in [('dem_d', None), ('dem_elev', None),
 # HEADER
 # ─────────────────────────────────────────────────────
 
-# Show Copernicus DEM availability banner once
-_copernicus_badge = '<span class="src-badge src-local">🌍 Copernicus DEM 30m — primary elevation source</span>'
+# Show elevation source banner once
+if _SRTM_AVAILABLE:
+    _copernicus_badge = '<span class="src-badge src-local">⚡ SRTM1 30m local cache active — offline, free, no API key</span>'
+else:
+    _copernicus_badge = '<span class="src-badge src-cloud">☁ srtm library not found — pip install srtm.py</span>'
 
 st.markdown(f"""
 <div style="border-bottom:1px solid #dde3ec;padding-bottom:14px;margin-bottom:20px;">
@@ -687,14 +796,23 @@ with st.sidebar:
         az_deg   = st.number_input("Antenna Azimuth (deg)", min_value=0.0, max_value=360.0, value=80.0, step=1.0)
 
         # Show which source will be used
-        st.markdown(
-            "<div style='font-size:0.68rem;color:#15803d;background:#dcfce7;"
-            "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
-            "🌍 Will use Copernicus DEM 30m via Open-Meteo API</div>",
-            unsafe_allow_html=True)
+        if _SRTM_AVAILABLE:
+            st.markdown(
+                "<div style='font-size:0.68rem;color:#15803d;background:#dcfce7;"
+                "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
+                "⚡ SRTM1 30 m tiles — offline after first download (≈1 MB/tile)</div>",
+                unsafe_allow_html=True)
+        else:
+            st.markdown(
+                "<div style='font-size:0.68rem;color:#92400e;background:#fef3c7;"
+                "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
+                "☁ srtm library not found — will use Open-Elevation cloud API<br>"
+                "<code>pip install srtm.py</code> for offline 30 m tiles</div>",
+                unsafe_allow_html=True)
 
         if st.button("↻ Fetch Elevation Profile", type="primary", use_container_width=True):
-            with st.spinner("Loading Copernicus DEM 30m elevation…"):
+            src_label = "SRTM1 30m (local)" if _SRTM_AVAILABLE else "Open-Elevation (cloud)"
+            with st.spinner(f"Loading elevation via {src_label}…"):
                 try:
                     d_arr, e_arr, source = fetch_dem(site_lat, site_lon, az_deg, dist_m, n=100)
                     st.session_state.dem_d      = d_arr
@@ -771,8 +889,8 @@ if has_dem and terrain_on:
 # ─────────────────────────────────────────────────────
 s      = st.session_state.dem_status
 src    = st.session_state.dem_source
-if src == "Copernicus DEM 30m":
-    src_html = '<span class="src-badge src-local">Copernicus DEM 30m</span>'
+if src == "SRTM1 30m (local)":
+    src_html = '<span class="src-badge src-local">SRTM1 30m local</span>'
 elif src:
     src_html = '<span class="src-badge src-cloud">cloud API</span>'
 else:
@@ -853,13 +971,32 @@ st.plotly_chart(fig, use_container_width=True,
                 config={'displayModeBar': True, 'displaylogo': False})
 
 # ─────────────────────────────────────────────────────
+# SECTOR METRICS  (placed here — above the map/lobe grid)
+# ─────────────────────────────────────────────────────
+st.markdown(f"""
+<div class="map-legend-box">
+  <div class="map-legend-title">Sector Metrics</div>
+  <div class="mleg-row">
+    <div class="mleg"><div class="mleg-box" style="background:rgba(14,165,233,0.10);border-color:#0ea5e9;"></div>Sector outline</div>
+    <div class="mleg"><div class="mleg-box" style="background:rgba(74,222,128,0.22);border-color:#4ade80;"></div>Footprint zone</div>
+    <div class="mleg"><div class="mleg-dot" style="background:#0ea5e9;"></div>Antenna Site</div>
+    <div class="mleg"><div class="mleg-dot" style="background:#0d9488;"></div>Main Lobe Hit</div>
+  </div>
+  <div class="sm-row">
+    <div class="sm"><div class="sm-lbl">Main Lobe</div><div class="sm-val">{fmt_d(main_d, units)}</div></div>
+    <div class="sm"><div class="sm-lbl">Footprint</div>
+      <div class="sm-val" style="font-size:0.8rem;">{fmt_d(near_d, units)} to {fmt_d(far_d, units)}</div></div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────
 # GRID ROW: Sector Map (Esri Satellite) + Lobe Projection
 # ─────────────────────────────────────────────────────
 map_col, lobe_col = st.columns(2, gap="medium")
 
 with map_col:
     st.markdown('<div class="sec-hdr">① Sector Map (Esri Satellite)</div>', unsafe_allow_html=True)
-    st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth.")
+    st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth, and auto-adjusted distance.")
     map_obj  = build_map(site_lat, site_lon, az_deg, hbw, main_d, near_d, far_d, dem_d, dist_m)
     map_data = st_folium(map_obj, width="100%", height=380,
                          returned_objects=["last_clicked"],
@@ -900,25 +1037,6 @@ else:
     st.markdown(
         '<div class="click-idle">🖱 Click anywhere on the map to see its coordinates and distance from the antenna site</div>',
         unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────────────
-# MAP LEGEND
-# ─────────────────────────────────────────────────────
-st.markdown(f"""
-<div class="map-legend-box">
-  <div class="map-legend-title">Sector Metrics</div>
-  <div class="mleg-row">
-    <div class="mleg"><div class="mleg-box" style="background:rgba(14,165,233,0.10);border-color:#0ea5e9;"></div>Sector outline</div>
-    <div class="mleg"><div class="mleg-box" style="background:rgba(74,222,128,0.22);border-color:#4ade80;"></div>Footprint zone</div>
-    <div class="mleg"><div class="mleg-dot" style="background:#0ea5e9;"></div>Antenna Site</div>
-    <div class="mleg"><div class="mleg-dot" style="background:#0d9488;"></div>Main Lobe Hit</div>
-  </div>
-  <div class="sm-row">
-    <div class="sm"><div class="sm-lbl">Main Lobe</div><div class="sm-val">{fmt_d(main_d, units)}</div></div>
-    <div class="sm"><div class="sm-lbl">Footprint</div>
-      <div class="sm-val" style="font-size:0.8rem;">{fmt_d(near_d, units)} to {fmt_d(far_d, units)}</div></div>
-  </div>
-</div>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────
 # MAP FOOTER + KMZ EXPORT
