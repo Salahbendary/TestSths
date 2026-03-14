@@ -740,7 +740,7 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
                             line=dict(color=col, width=2)),
                 showlegend=False,
                 hovertemplate=(
-                    f'<b>{emoji} {lobe_name}</b><br>'
+                    f'<b>{emoji} {"Ground Intersection"}</b><br>'
                     f'Distance: {fmt_d(hx, units)}<br>'
                     f'Rel. elevation: {hy:.1f} m'
                     '<extra></extra>'
