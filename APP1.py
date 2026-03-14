@@ -760,12 +760,7 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
             text=[f'  {h_m:.0f} m AGL'], textposition='middle right',
             textfont=dict(family='Inter', size=10, color='#ef4444'),
             name='Antenna',
-            hovertemplate=(
-                '<b>📡 Antenna</b><br>'
-                f'Height AGL: {h_m:.0f} m<br>'
-                f'Downtilt: {dt_deg:.2f}°  VBW: {vbw_deg:.2f}°'
-                '<extra></extra>'
-            ),
+
         ))
 
         title_txt  = (f'Lobe Projection | Az: {az_deg:.2f}° | '
