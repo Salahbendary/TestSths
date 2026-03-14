@@ -995,7 +995,7 @@ if _RASTERIO_AVAILABLE:
 elif _SRTM_AVAILABLE:
     _copernicus_badge = (
         '<span class="src-badge src-local">'
-        '⚡ SRTM1 30m local — install rasterio for Copernicus DEM'
+        '⚡ SRTM1 30m local'
         '</span>'
     )
 else:
