@@ -721,13 +721,31 @@ def buildLobeChart(hM, dtDeg, vbwDeg,
         yMax = hM + 30                                                     # Chart y-max: 30 m headroom above antenna tip
         xMax = float(demD[-1])                                             # Chart x-max: end of the DEM profile
 
-        # ── Terrain fill ──────────────────────────────────────────────────
+        # ── Terrain fill — split at main lobe ground hit ─────────────────
+        # Illuminated zone (0 → mainHitX): light blue fill + light blue line
+        # Shadow zone (mainHitX → end):    dark fill + red line
+        splitIdx = int(np.searchsorted(xs, mainHitX))                      # First sample index at or beyond the main-lobe hit
+        splitIdx = max(1, min(splitIdx, N - 1))                            # Clamp to a valid interior index
+
         fig.add_trace(go.Scatter(
-            x=xs, y=terrainRel,
-            fill='tozeroy',                                                # Fill terrain area down to y=0 (site level)
-            fillcolor='rgba(125,211,252,0.25)',
-            line=dict(color='#7dd3fc', width=1.5),
+            x=xs[:splitIdx + 1], y=terrainRel[:splitIdx + 1],
+            fill='tozeroy',                                                # Fill illuminated terrain down to y=0
+            fillcolor='rgba(125,211,252,0.25)',                            # Translucent sky-blue fill
+            line=dict(color='#7dd3fc', width=1.5),                        # Solid light-blue outline
             name='Terrain',
+            hovertemplate=(
+                'Dist: %{x:.0f} m<br>'
+                'Rel. height: %{y:.1f} m'
+                '<extra></extra>'
+            ),
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=xs[splitIdx:], y=terrainRel[splitIdx:],
+            fill='tozeroy',                                                # Fill shadow terrain down to y=0
+            fillcolor='rgba(15,5,5,0.72)',                                 # Dark shadow fill
+            line=dict(color='#ef4444', width=1.5),                        # Red outline in shadow zone
+            showlegend=False, name='_terrain_shadow',
             hovertemplate=(
                 'Dist: %{x:.0f} m<br>'
                 'Rel. height: %{y:.1f} m'
