@@ -860,7 +860,7 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
         ))
 
         title_txt  = 'Lobe Distance Projection'
-        subtitle   = 'Theoretical flat-earth distances — load terrain profile for real intersections'
+        subtitle   = 'Theoretical flat-earth distances'
         y_axis_lbl = 'Antenna Height (m)'
 
     # ── Shared layout ─────────────────────────────────────────────────────────
