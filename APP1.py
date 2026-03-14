@@ -534,8 +534,8 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
                     line=dict(color='white', width=2)),
         text=[f'Antenna {h_m:.0f} m AGL'], textposition='top right',
         textfont=dict(family='Inter', size=10, color='#ef4444'),
-        showlegend=False, name='Antenna'
-       
+        showlegend=False, name='Antenna',
+        hovertemplate=f'Antenna<br>AGL: {h_m:.0f} m<br>MSL: {ant_elev:.1f} m<extra></extra>'
     ))
 
     fig.add_trace(go.Scatter(
@@ -578,7 +578,7 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         hoverlabel=dict(bgcolor='#1e293b', bordercolor='#334155',
                         font=dict(family='JetBrains Mono', size=11, color='#e2e8f0')),
         annotations=[
-            dict(x=0.5, y=1.06, xref='paper', yref='paper', showarrow=False,
+            dict(x=0.5, y=1.04, xref='paper', yref='paper', showarrow=False,
                  text=title_txt,
                  font=dict(size=11, color='#cbd5e1', family='Inter', weight=600),
                  xanchor='center'),
@@ -716,12 +716,8 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
                 line=dict(color=col, width=2),
                 name=lbl,
                 hovertemplate=(
-                    f'<b>{emoji} {lbl.split("(")[0].strip()}</b><br>'
-                    'Distance: %{x:.0f} m<br>'
                     'Rel. height: %{y:.1f} m<br>'
-                    f'Ground hit: {fmt_d(hit_x, units)} '
-                    f'(elev +{hit_y:.1f} m)<br>'
-                    f'Lobe angle: {angle_lbl}'
+                    f'Ground hit: {fmt_d(hit_x, units)}'
                     '<extra></extra>'
                 ),
             ))
@@ -739,7 +735,6 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
                             line=dict(color='white', width=1.5)),
                 showlegend=False,
                 hovertemplate=(
-                    f'<b>{emoji} Ground intersection</b><br>'
                     f'Distance: {fmt_d(hx, units)}<br>'
                     f'Rel. elevation: {hy:.1f} m'
                     '<extra></extra>'
@@ -760,7 +755,7 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
             text=[f'  {h_m:.0f} m AGL'], textposition='middle right',
             textfont=dict(family='Inter', size=10, color='#ef4444'),
             name='Antenna',
-
+            hoverinfo='skip',
         ))
 
         title_txt  = (f'Lobe Projection | Az: {az_deg:.2f}° | '
@@ -821,11 +816,8 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
                 line=dict(color='rgba(0,0,0,0)', width=10),
                 showlegend=False,
                 hovertemplate=(
-                    f'<b>{emoji} {lbl}</b><br>'
-                    'Distance: %{x:.0f} m<br>'
                     'Height: %{y:.1f} m<br>'
-                    f'Ground hit: {fmt_d(d_hit, units)}<br>'
-                    f'Angle: {angle:.2f}°'
+                    f'Ground hit: {fmt_d(d_hit, units)}'
                     '<extra></extra>'
                 ),
             ))
@@ -842,11 +834,7 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
                 marker=dict(size=9, color=col, symbol='circle',
                             line=dict(color='white', width=1.5)),
                 showlegend=False,
-                hovertemplate=(
-                    f'<b>{emoji} Ground hit</b><br>'
-                    f'{lbl}'
-                    '<extra></extra>'
-                ),
+                hovertemplate=f'{lbl}<extra></extra>',
             ))
 
         # ── Antenna ──────────────────────────────────────────────────────────
@@ -863,12 +851,7 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
             text=[f'  {h_m:.0f} m AGL'], textposition='middle right',
             textfont=dict(family='Inter', size=10, color='#ef4444'),
             name='Antenna',
-            hovertemplate=(
-                '<b>📡 Antenna</b><br>'
-                f'Height AGL: {h_m:.0f} m<br>'
-                f'Downtilt: {dt_deg:.2f}°  VBW: {vbw_deg:.2f}°'
-                '<extra></extra>'
-            ),
+            hoverinfo='skip',
         ))
 
         title_txt  = 'Lobe Distance Projection'
@@ -1281,7 +1264,7 @@ map_col, lobe_col = st.columns(2, gap="medium")
 
 with map_col:
     st.markdown('<div class="sec-hdr">① Sector Map (Esri Satellite)</div>', unsafe_allow_html=True)
-    st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth, and auto-adjusted distance.")
+    st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth.")
     map_obj  = build_map(site_lat, site_lon, az_deg, hbw, main_d, near_d, far_d, dem_d, dist_m)
     map_data = st_folium(map_obj, width="100%", height=380,
                          returned_objects=["last_clicked"],
