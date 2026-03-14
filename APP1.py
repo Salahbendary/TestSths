@@ -578,7 +578,7 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         hoverlabel=dict(bgcolor='#1e293b', bordercolor='#334155',
                         font=dict(family='JetBrains Mono', size=11, color='#e2e8f0')),
         annotations=[
-            dict(x=0.5, y=1.04, xref='paper', yref='paper', showarrow=False,
+            dict(x=0.5, y=1.06, xref='paper', yref='paper', showarrow=False,
                  text=title_txt,
                  font=dict(size=11, color='#cbd5e1', family='Inter', weight=600),
                  xanchor='center'),
@@ -588,186 +588,344 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
 
 
 # ─────────────────────────────────────────────────────
-# 2D LOBE PROJECTION CHART (dark theme)
+# 2D LOBE PROJECTION CHART  — terrain-aware / dynamic
 # ─────────────────────────────────────────────────────
-def build_lobe_chart(h_m, dt_deg, vbw_deg):
-    """Flat-earth 2D antenna lobe projection — triangular filled areas."""
-    far_angle  = max(0.05, dt_deg - vbw_deg / 2)
-    far_d_f    = h_m / math.tan(math.radians(far_angle))
-    main_d_f   = h_m / math.tan(math.radians(dt_deg))
-    near_d_f   = h_m / math.tan(math.radians(dt_deg + vbw_deg / 2))
-    x_max      = far_d_f * 1.08
+def build_lobe_chart(h_m, dt_deg, vbw_deg,
+                     dem_d=None, dem_elev=None,
+                     units="Metric (m, km)", az_deg=0.0):
+    """
+    Lobe projection chart.
 
-    # ── Build detailed hover point arrays (every 5 % along each lobe edge) ──
-    def _lobe_hover_xs(d_hit):
-        pts = np.linspace(0, d_hit, 40)
-        return pts
+    Flat-earth mode (no DEM):  classic triangular lobes, Y = relative height.
+    Terrain mode (DEM loaded): lobes clipped at real ground using the same
+                               _get_clipped_ray / _lobe_polygon helpers as
+                               build_chart.  Y-axis = height relative to site
+                               ground (0 = site ground, h_m = antenna tip).
+    """
+    has_dem   = dem_d is not None and dem_elev is not None and len(dem_d) > 1
+    far_angle = max(0.05, dt_deg - vbw_deg / 2)
 
-    def _lobe_edge_ys(xs_edge, angle_deg):
-        """Height of the lobe edge at each distance from antenna origin."""
-        return h_m - xs_edge * math.tan(math.radians(angle_deg))
+    # ── Flat-earth reference distances (always computed) ─────────────────────
+    far_d_f   = h_m / math.tan(math.radians(far_angle))
+    main_d_f  = h_m / math.tan(math.radians(dt_deg))
+    near_d_f  = h_m / math.tan(math.radians(dt_deg + vbw_deg / 2))
 
-    # Upper lobe edge (far boundary)
-    ul_xs = _lobe_hover_xs(far_d_f)
-    ul_ys = _lobe_edge_ys(ul_xs, far_angle)
-
-    # Main lobe edge (centre)
-    ml_xs = _lobe_hover_xs(main_d_f)
-    ml_ys = _lobe_edge_ys(ml_xs, dt_deg)
-
-    # Lower lobe edge (near boundary)
-    ll_xs = _lobe_hover_xs(near_d_f)
-    ll_ys = _lobe_edge_ys(ll_xs, dt_deg + vbw_deg / 2)
+    # ── Lobe colours (same as build_chart) ───────────────────────────────────
+    C_UPPER_FILL = 'rgba(59,130,246,0.28)'
+    C_UPPER_LINE = '#3b82f6'
+    C_MAIN_FILL  = 'rgba(248,113,113,0.28)'
+    C_MAIN_LINE  = '#f87171'
+    C_LOWER_FILL = 'rgba(253,224,71,0.28)'
+    C_LOWER_LINE = '#fde047'
 
     fig = go.Figure()
 
-    # ── Filled triangles (hoverinfo='skip' — lines carry the tooltips) ──────
-    fig.add_trace(go.Scatter(
-        x=[0, far_d_f, main_d_f, 0],
-        y=[h_m, 0, 0, h_m],
-        fill='toself',
-        fillcolor='rgba(59,130,246,0.55)',
-        line=dict(color='rgba(59,130,246,0.85)', width=1.5),
-        name='Upper Lobe',
-        hoverinfo='skip',
-    ))
-    fig.add_trace(go.Scatter(
-        x=[0, main_d_f, near_d_f, 0],
-        y=[h_m, 0, 0, h_m],
-        fill='toself',
-        fillcolor='rgba(248,113,113,0.55)',
-        line=dict(color='rgba(248,113,113,0.85)', width=1.5),
-        name='Main Lobe',
-        hoverinfo='skip',
-    ))
-    fig.add_trace(go.Scatter(
-        x=[0, near_d_f, 0, 0],
-        y=[h_m, 0, 0, h_m],
-        fill='toself',
-        fillcolor='rgba(253,224,71,0.55)',
-        line=dict(color='rgba(253,224,71,0.85)', width=1.5),
-        name='Lower Lobe',
-        hoverinfo='skip',
-    ))
+    # ══════════════════════════════════════════════════════════════════════════
+    # TERRAIN MODE  — reuses _get_clipped_ray / _lobe_polygon / _lower_polygon
+    # ══════════════════════════════════════════════════════════════════════════
+    if has_dem:
+        site_elev = float(dem_elev[0])
+        N         = 400
+        xs        = np.linspace(0, float(dem_d[-1]), N)
 
-    # ── Invisible hover-lines along each lobe edge ───────────────────────────
-    fig.add_trace(go.Scatter(
-        x=ul_xs, y=ul_ys,
-        mode='lines',
-        line=dict(color='rgba(0,0,0,0)', width=8),
-        showlegend=False,
-        name='upper_hover',
-        hovertemplate=(
-            '<b>🔵 Upper Lobe</b><br>'
-            'Distance: %{x:.0f} m<br>'
-            'Height at point: %{y:.1f} m<br>'
-            f'Lobe hit ground at: {far_d_f:.0f} m<br>'
-            f'Angle (upper edge): {far_angle:.2f}°'
-            '<extra></extra>'
-        ),
-    ))
-    fig.add_trace(go.Scatter(
-        x=ml_xs, y=ml_ys,
-        mode='lines',
-        line=dict(color='rgba(0,0,0,0)', width=8),
-        showlegend=False,
-        name='main_hover',
-        hovertemplate=(
-            '<b>🔴 Main Lobe</b><br>'
-            'Distance: %{x:.0f} m<br>'
-            'Height at point: %{y:.1f} m<br>'
-            f'Main lobe hits ground at: {main_d_f:.0f} m<br>'
-            f'Downtilt angle: {dt_deg:.2f}°'
-            '<extra></extra>'
-        ),
-    ))
-    fig.add_trace(go.Scatter(
-        x=ll_xs, y=ll_ys,
-        mode='lines',
-        line=dict(color='rgba(0,0,0,0)', width=8),
-        showlegend=False,
-        name='lower_hover',
-        hovertemplate=(
-            '<b>🟡 Lower Lobe</b><br>'
-            'Distance: %{x:.0f} m<br>'
-            'Height at point: %{y:.1f} m<br>'
-            f'Lobe hits ground at: {near_d_f:.0f} m<br>'
-            f'Angle (lower edge): {dt_deg + vbw_deg/2:.2f}°'
-            '<extra></extra>'
-        ),
-    ))
+        # Interpolate terrain in relative coords (0 = site ground)
+        terrain_abs = np.interp(xs, dem_d, dem_elev)
+        terrain_rel = terrain_abs - site_elev        # relative height
 
-    # ── Ground intersection markers ──────────────────────────────────────────
-    for d_hit, lbl, col in [
-        (far_d_f,  f'Upper edge: {far_d_f:.0f} m',  '#3b82f6'),
-        (main_d_f, f'Main lobe: {main_d_f:.0f} m',  '#f87171'),
-        (near_d_f, f'Lower edge: {near_d_f:.0f} m', '#fde047'),
-    ]:
+        # _get_clipped_ray expects absolute elevations; pass relative by
+        # treating site_elev=0 and terrain as relative values
+        xs_far,  ys_far  = _get_clipped_ray(xs, terrain_rel, 0.0, h_m, far_angle)
+        xs_main, ys_main = _get_clipped_ray(xs, terrain_rel, 0.0, h_m, dt_deg)
+        xs_near, ys_near = _get_clipped_ray(xs, terrain_rel, 0.0, h_m,
+                                             dt_deg + vbw_deg / 2)
+
+        far_hit_x  = float(xs_far[-1])
+        main_hit_x = float(xs_main[-1])
+        near_hit_x = float(xs_near[-1])
+        far_hit_y  = float(np.interp(far_hit_x,  xs, terrain_rel))
+        main_hit_y = float(np.interp(main_hit_x, xs, terrain_rel))
+        near_hit_y = float(np.interp(near_hit_x, xs, terrain_rel))
+
+        y_min  = float(np.min(terrain_rel)) - 10
+        y_max  = h_m + 30
+        x_max  = float(dem_d[-1])
+
+        # ── Terrain fill ─────────────────────────────────────────────────────
         fig.add_trace(go.Scatter(
-            x=[d_hit], y=[0],
-            mode='markers',
-            marker=dict(size=9, color=col, symbol='circle',
-                        line=dict(color='white', width=1.5)),
-            showlegend=False,
-            hovertemplate=f'<b>Ground hit</b><br>{lbl}<extra></extra>',
+            x=xs, y=terrain_rel,
+            fill='tozeroy',
+            fillcolor='rgba(125,211,252,0.25)',
+            line=dict(color='#7dd3fc', width=1.5),
+            name='Terrain',
+            hovertemplate=(
+                'Dist: %{x:.0f} m<br>'
+                'Rel. height: %{y:.1f} m'
+                '<extra></extra>'
+            ),
         ))
 
-    # ── Antenna marker ───────────────────────────────────────────────────────
-    fig.add_trace(go.Scatter(
-        x=[0], y=[h_m],
-        mode='markers',
-        marker=dict(size=12, color='#ef4444', symbol='diamond',
-                    line=dict(color='white', width=1.5)),
-        name='Antenna',
-        hovertemplate=(
-            '<b>📡 Antenna</b><br>'
-            f'Height AGL: {h_m:.0f} m<br>'
-            f'Downtilt: {dt_deg:.2f}°<br>'
-            f'V-Beamwidth: {vbw_deg:.2f}°'
-            '<extra></extra>'
-        ),
-    ))
+        # ── Lower lobe fill ───────────────────────────────────────────────────
+        lo_px, lo_py = _lower_polygon(xs_near, ys_near, xs, terrain_rel)
+        fig.add_trace(go.Scatter(
+            x=lo_px, y=lo_py, fill='toself', fillcolor=C_LOWER_FILL,
+            line=dict(color='rgba(0,0,0,0)', width=0),
+            showlegend=False, name='_lf', hoverinfo='skip',
+        ))
 
+        # ── Main lobe fill ────────────────────────────────────────────────────
+        if main_hit_x >= near_hit_x:
+            ma_px, ma_py = _lobe_polygon(xs_main, ys_main, xs_near, ys_near,
+                                          xs, terrain_rel)
+        else:
+            ma_px, ma_py = _lobe_polygon(xs_near, ys_near, xs_main, ys_main,
+                                          xs, terrain_rel)
+        fig.add_trace(go.Scatter(
+            x=ma_px, y=ma_py, fill='toself', fillcolor=C_MAIN_FILL,
+            line=dict(color='rgba(0,0,0,0)', width=0),
+            showlegend=False, name='_mf', hoverinfo='skip',
+        ))
+
+        # ── Upper lobe fill ───────────────────────────────────────────────────
+        if far_hit_x >= main_hit_x:
+            up_px, up_py = _lobe_polygon(xs_far, ys_far, xs_main, ys_main,
+                                          xs, terrain_rel)
+        else:
+            up_px, up_py = _lobe_polygon(xs_main, ys_main, xs_far, ys_far,
+                                          xs, terrain_rel)
+        fig.add_trace(go.Scatter(
+            x=up_px, y=up_py, fill='toself', fillcolor=C_UPPER_FILL,
+            line=dict(color='rgba(0,0,0,0)', width=0),
+            showlegend=False, name='_uf', hoverinfo='skip',
+        ))
+
+        # ── Clipped lobe ray lines with hover ────────────────────────────────
+        for xs_r, ys_r, col, lbl, angle_lbl, hit_x, hit_y, emoji in [
+            (xs_far,  ys_far,  C_UPPER_LINE,
+             f'Upper Lobe ({fmt_d(far_hit_x, units)})',
+             f'{far_angle:.2f}°', far_hit_x, far_hit_y, '🔵'),
+            (xs_main, ys_main, C_MAIN_LINE,
+             f'Main Lobe ({fmt_d(main_hit_x, units)})',
+             f'{dt_deg:.2f}°', main_hit_x, main_hit_y, '🔴'),
+            (xs_near, ys_near, C_LOWER_LINE,
+             f'Lower Lobe ({fmt_d(near_hit_x, units)})',
+             f'{dt_deg + vbw_deg/2:.2f}°', near_hit_x, near_hit_y, '🟡'),
+        ]:
+            fig.add_trace(go.Scatter(
+                x=xs_r, y=ys_r,
+                mode='lines',
+                line=dict(color=col, width=2),
+                name=lbl,
+                hovertemplate=(
+                    f'<b>{emoji} {lbl.split("(")[0].strip()}</b><br>'
+                    'Distance: %{x:.0f} m<br>'
+                    'Rel. height: %{y:.1f} m<br>'
+                    f'Ground hit: {fmt_d(hit_x, units)} '
+                    f'(elev +{hit_y:.1f} m)<br>'
+                    f'Lobe angle: {angle_lbl}'
+                    '<extra></extra>'
+                ),
+            ))
+
+        # ── Terrain-hit intersection markers ─────────────────────────────────
+        for hx, hy, col, emoji in [
+            (far_hit_x,  far_hit_y,  C_UPPER_LINE, '🔵'),
+            (main_hit_x, main_hit_y, C_MAIN_LINE,  '🔴'),
+            (near_hit_x, near_hit_y, C_LOWER_LINE, '🟡'),
+        ]:
+            fig.add_trace(go.Scatter(
+                x=[hx], y=[hy],
+                mode='markers',
+                marker=dict(size=9, color=col, symbol='x',
+                            line=dict(color='white', width=1.5)),
+                showlegend=False,
+                hovertemplate=(
+                    f'<b>{emoji} Ground intersection</b><br>'
+                    f'Distance: {fmt_d(hx, units)}<br>'
+                    f'Rel. elevation: {hy:.1f} m'
+                    '<extra></extra>'
+                ),
+            ))
+
+        # ── Antenna stem & marker ─────────────────────────────────────────────
+        fig.add_trace(go.Scatter(
+            x=[0, 0], y=[0, h_m],
+            line=dict(color='#ef4444', width=3),
+            showlegend=False, name='_stem', hoverinfo='skip',
+        ))
+        fig.add_trace(go.Scatter(
+            x=[0], y=[h_m],
+            mode='markers+text',
+            marker=dict(size=11, color='#ef4444', symbol='diamond',
+                        line=dict(color='white', width=2)),
+            text=[f'  {h_m:.0f} m AGL'], textposition='middle right',
+            textfont=dict(family='Inter', size=10, color='#ef4444'),
+            name='Antenna',
+            hovertemplate=(
+                '<b>📡 Antenna</b><br>'
+                f'Height AGL: {h_m:.0f} m<br>'
+                f'Downtilt: {dt_deg:.2f}°  VBW: {vbw_deg:.2f}°'
+                '<extra></extra>'
+            ),
+        ))
+
+        title_txt  = (f'Lobe Projection | Az: {az_deg:.2f}° | '
+                      f'Tilt: {dt_deg:.2f}° | VB: {vbw_deg:.2f}° | '
+                      f'Profile: {fmt_d(x_max, units)}')
+        subtitle   = 'Terrain-adjusted — lobes clipped at real ground intersections'
+        y_axis_lbl = 'Relative Height (m)'
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # FLAT-EARTH MODE  — classic triangular lobes
+    # ══════════════════════════════════════════════════════════════════════════
+    else:
+        x_max  = far_d_f * 1.08
+        y_min  = -2.0
+        y_max  = h_m * 1.18
+
+        def _fe_ys(xs_e, angle_deg):
+            return h_m - xs_e * math.tan(math.radians(angle_deg))
+
+        xs_hover = np.linspace(0, far_d_f, 60)
+
+        # ── Flat terrain line ────────────────────────────────────────────────
+        fig.add_trace(go.Scatter(
+            x=[0, far_d_f * 1.08], y=[0, 0],
+            fill='tozeroy',
+            fillcolor='rgba(125,211,252,0.18)',
+            line=dict(color='#7dd3fc', width=1.2),
+            showlegend=False, name='_flat_gnd', hoverinfo='skip',
+        ))
+
+        # ── Filled lobe triangles ────────────────────────────────────────────
+        for poly_x, poly_y, fill_col, lbl in [
+            ([0, far_d_f,  main_d_f, 0], [h_m, 0, 0, h_m],
+             'rgba(59,130,246,0.45)',  'Upper Lobe'),
+            ([0, main_d_f, near_d_f, 0], [h_m, 0, 0, h_m],
+             'rgba(248,113,113,0.45)', 'Main Lobe'),
+            ([0, near_d_f, 0,        0], [h_m, 0, 0, h_m],
+             'rgba(253,224,71,0.45)', 'Lower Lobe'),
+        ]:
+            fig.add_trace(go.Scatter(
+                x=poly_x, y=poly_y,
+                fill='toself', fillcolor=fill_col,
+                line=dict(color=fill_col.replace('0.45', '0.85'), width=1.5),
+                name=lbl, hoverinfo='skip',
+            ))
+
+        # ── Invisible hover lines ────────────────────────────────────────────
+        for angle, d_hit, col, lbl, emoji in [
+            (far_angle,           far_d_f,  C_UPPER_LINE, 'Upper Lobe', '🔵'),
+            (dt_deg,              main_d_f, C_MAIN_LINE,  'Main Lobe',  '🔴'),
+            (dt_deg + vbw_deg/2,  near_d_f, C_LOWER_LINE, 'Lower Lobe', '🟡'),
+        ]:
+            xs_e = np.linspace(0, d_hit, 40)
+            ys_e = _fe_ys(xs_e, angle)
+            fig.add_trace(go.Scatter(
+                x=xs_e, y=ys_e,
+                mode='lines',
+                line=dict(color='rgba(0,0,0,0)', width=10),
+                showlegend=False,
+                hovertemplate=(
+                    f'<b>{emoji} {lbl}</b><br>'
+                    'Distance: %{x:.0f} m<br>'
+                    'Height: %{y:.1f} m<br>'
+                    f'Ground hit: {fmt_d(d_hit, units)}<br>'
+                    f'Angle: {angle:.2f}°'
+                    '<extra></extra>'
+                ),
+            ))
+
+        # ── Ground hit markers ───────────────────────────────────────────────
+        for d_hit, col, lbl, emoji in [
+            (far_d_f,  C_UPPER_LINE, f'Upper: {fmt_d(far_d_f, units)}',  '🔵'),
+            (main_d_f, C_MAIN_LINE,  f'Main: {fmt_d(main_d_f, units)}',  '🔴'),
+            (near_d_f, C_LOWER_LINE, f'Lower: {fmt_d(near_d_f, units)}', '🟡'),
+        ]:
+            fig.add_trace(go.Scatter(
+                x=[d_hit], y=[0],
+                mode='markers',
+                marker=dict(size=9, color=col, symbol='circle',
+                            line=dict(color='white', width=1.5)),
+                showlegend=False,
+                hovertemplate=(
+                    f'<b>{emoji} Ground hit</b><br>'
+                    f'{lbl}'
+                    '<extra></extra>'
+                ),
+            ))
+
+        # ── Antenna ──────────────────────────────────────────────────────────
+        fig.add_trace(go.Scatter(
+            x=[0, 0], y=[0, h_m],
+            line=dict(color='#ef4444', width=3),
+            showlegend=False, name='_stem', hoverinfo='skip',
+        ))
+        fig.add_trace(go.Scatter(
+            x=[0], y=[h_m],
+            mode='markers+text',
+            marker=dict(size=11, color='#ef4444', symbol='diamond',
+                        line=dict(color='white', width=2)),
+            text=[f'  {h_m:.0f} m AGL'], textposition='middle right',
+            textfont=dict(family='Inter', size=10, color='#ef4444'),
+            name='Antenna',
+            hovertemplate=(
+                '<b>📡 Antenna</b><br>'
+                f'Height AGL: {h_m:.0f} m<br>'
+                f'Downtilt: {dt_deg:.2f}°  VBW: {vbw_deg:.2f}°'
+                '<extra></extra>'
+            ),
+        ))
+
+        title_txt  = 'Lobe Distance Projection'
+        subtitle   = 'Theoretical flat-earth distances — load terrain profile for real intersections'
+        y_axis_lbl = 'Antenna Height (m)'
+
+    # ── Shared layout ─────────────────────────────────────────────────────────
     fig.update_layout(
-        title=dict(
-            text='Lobe Distance Projection',
-            font=dict(size=13, color='#e2e8f0', family='Inter', weight=700),
-            x=0.03, xanchor='left'
-        ),
         plot_bgcolor='#0f172a',
         paper_bgcolor='#1e293b',
         font=dict(family='Inter', color='#94a3b8', size=11),
-        margin=dict(l=60, r=20, t=65, b=55),
+        margin=dict(l=60, r=20, t=70, b=55),
         height=380,
         legend=dict(
-            orientation='v', yanchor='top', y=0.95, xanchor='right', x=0.98,
-            font=dict(size=11, family='Inter', color='#cbd5e1'),
-            bgcolor='rgba(0,0,0,0.35)', borderwidth=0,
+            orientation='v', yanchor='top', y=0.97, xanchor='right', x=0.98,
+            font=dict(size=10, family='Inter', color='#cbd5e1'),
+            bgcolor='rgba(15,23,42,0.65)', bordercolor='#334155', borderwidth=1,
+            tracegroupgap=2,
         ),
         xaxis=dict(
-            title=dict(text='Distance (meters)', font=dict(size=11, color='#64748b', family='Inter')),
-            gridcolor='rgba(255,255,255,0.05)', zerolinecolor='rgba(255,255,255,0.10)',
+            title=dict(text='Distance in meters',
+                       font=dict(size=11, color='#64748b', family='Inter')),
+            gridcolor='rgba(255,255,255,0.05)',
+            zerolinecolor='rgba(255,255,255,0.10)',
             tickfont=dict(size=10, color='#64748b', family='JetBrains Mono'),
             range=[0, x_max], showline=True, linecolor='#334155',
         ),
         yaxis=dict(
-            title=dict(text='Antenna Height (m)', font=dict(size=11, color='#64748b', family='Inter')),
-            gridcolor='rgba(255,255,255,0.05)', zerolinecolor='rgba(255,255,255,0.10)',
+            title=dict(text=y_axis_lbl,
+                       font=dict(size=11, color='#64748b', family='Inter')),
+            gridcolor='rgba(255,255,255,0.05)',
+            zerolinecolor='rgba(255,255,255,0.10)',
             tickfont=dict(size=10, color='#64748b', family='JetBrains Mono'),
-            range=[0, h_m * 1.18], showline=True, linecolor='#334155',
+            range=[y_min, y_max], showline=True, linecolor='#334155',
         ),
-        annotations=[
-            dict(x=0.03, y=1.10, xref='paper', yref='paper', showarrow=False,
-                 text='Theoretical lobe distances relative to the antenna',
-                 font=dict(size=10, color='#64748b', family='Inter'), xanchor='left'),
-        ],
-        hovermode='closest',
+        hovermode='x unified',
         hoverlabel=dict(
             bgcolor='#1e293b',
             bordercolor='#334155',
             font=dict(family='JetBrains Mono', size=11, color='#e2e8f0'),
             align='left',
         ),
+        annotations=[
+            dict(x=0.5, y=1.07, xref='paper', yref='paper', showarrow=False,
+                 text=title_txt,
+                 font=dict(size=12, color='#e2e8f0', family='Inter', weight=700),
+                 xanchor='center'),
+            dict(x=0.5, y=1.01, xref='paper', yref='paper', showarrow=False,
+                 text=subtitle,
+                 font=dict(size=9, color='#64748b', family='Inter'),
+                 xanchor='center'),
+        ],
     )
     return fig
 
@@ -1136,10 +1294,17 @@ with map_col:
 
 with lobe_col:
     st.markdown('<div class="sec-hdr">② Lobe Projection</div>', unsafe_allow_html=True)
-    st.caption("Theoretical lobe distances relative to the antenna.")
-    lobe_fig = build_lobe_chart(h_m, dt_deg, vbw)
+    if has_dem:
+        st.caption("Terrain-adjusted — lobes clipped at real ground intersections.")
+    else:
+        st.caption("Flat-earth model — load terrain profile for terrain-aware lobes.")
+    lobe_fig = build_lobe_chart(
+        h_m, dt_deg, vbw,
+        dem_d=dem_d, dem_elev=dem_elev,
+        units=units, az_deg=az_deg,
+    )
     st.plotly_chart(lobe_fig, use_container_width=True,
-                    config={'displayModeBar': False, 'displaylogo': False})
+                    config={'displayModeBar': True, 'displaylogo': False})
 
 _clicked = (map_data or {}).get("last_clicked")
 if _clicked and _clicked.get("lat") is not None:
