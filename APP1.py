@@ -578,7 +578,7 @@ def build_chart(h_m, dt_deg, vbw_deg, dist_m, main_d, near_d, far_d,
         hoverlabel=dict(bgcolor='#1e293b', bordercolor='#334155',
                         font=dict(family='JetBrains Mono', size=11, color='#e2e8f0')),
         annotations=[
-            dict(x=0.5, y=1.06, xref='paper', yref='paper', showarrow=False,
+            dict(x=0.5, y=1.04, xref='paper', yref='paper', showarrow=False,
                  text=title_txt,
                  font=dict(size=11, color='#cbd5e1', family='Inter', weight=600),
                  xanchor='center'),
