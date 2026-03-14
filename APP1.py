@@ -1068,7 +1068,7 @@ with st.sidebar:
             st.markdown(
                 "<div style='font-size:0.68rem;color:#15803d;background:#dcfce7;"
                 "border-radius:5px;padding:5px 10px;margin-bottom:4px;'>"
-                "⚡ SRTM1 30m tiles — <code>pip install rasterio</code> for Copernicus DEM</div>",
+                "⚡ SRTM1 30m tiles </div>",
                 unsafe_allow_html=True)
         else:
             st.markdown(
