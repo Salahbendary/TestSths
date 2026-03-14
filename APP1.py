@@ -764,11 +764,9 @@ def build_lobe_chart(h_m, dt_deg, vbw_deg,
             hoverinfo='skip',
         ))
 
-        title_txt  = (f'Lobe Projection | Az: {az_deg:.2f}° | '
-                      f'Tilt: {dt_deg:.2f}° | VB: {vbw_deg:.2f}° | '
-                      f'Profile: {fmt_d(x_max, units)}')
-        subtitle   = 'Terrain-adjusted — lobes clipped at real ground intersections'
-        y_axis_lbl = 'Relative Height (m)'
+        
+        subtitle   = 'Terrain-adjusted'
+        y_axis_lbl = 'Antenna Height (m)'
 
     # ══════════════════════════════════════════════════════════════════════════
     # FLAT-EARTH MODE  — classic triangular lobes
@@ -1270,7 +1268,7 @@ st.markdown(f"""
 map_col, lobe_col = st.columns(2, gap="medium")
 
 with map_col:
-    st.markdown('<div class="sec-hdr">① Sector Map (Esri Satellite)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec-hdr">Sector Map</div>', unsafe_allow_html=True)
     st.caption("Sector built from site coordinates, azimuth, horizontal beamwidth.")
     map_obj  = build_map(site_lat, site_lon, az_deg, hbw, main_d, near_d, far_d, dem_d, dist_m)
     map_data = st_folium(map_obj, width="100%", height=380,
@@ -1278,11 +1276,11 @@ with map_col:
                          key="sector_map")
 
 with lobe_col:
-    st.markdown('<div class="sec-hdr">② Lobe Projection</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec-hdr">Lobe Projection</div>', unsafe_allow_html=True)
     if has_dem:
-        st.caption("Terrain-adjusted — lobes clipped at real ground intersections.")
+        st.caption("Terrain-adjusted")
     else:
-        st.caption("Flat-earth model — load terrain profile for terrain-aware lobes.")
+        st.caption("Flat-earth model.")
     lobe_fig = build_lobe_chart(
         h_m, dt_deg, vbw,
         dem_d=dem_d, dem_elev=dem_elev,
