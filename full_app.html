@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Full Terrain App</title>
+
+<style>
+body { font-family: Arial; padding: 20px; }
+input, button { margin: 5px; padding: 8px; }
+#map { height: 400px; margin-top: 20px; }
+</style>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+</head>
+<body>
+
+<h2>Terrain Analysis App (No Backend)</h2>
+
+<label>Latitude:</label>
+<input type="number" id="lat" value="30" step="any">
+
+<label>Longitude:</label>
+<input type="number" id="lon" value="31" step="any">
+
+<button onclick="runApp()">Run</button>
+
+<pre id="output"></pre>
+
+<div id="map"></div>
+
+<script>
+let map = L.map('map').setView([30, 31], 6);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+}).addTo(map);
+
+let marker;
+
+async function runApp() {
+  const lat = document.getElementById('lat').value;
+  const lon = document.getElementById('lon').value;
+
+  const url = `https://api.opentopodata.org/v1/test-dataset?locations=${lat},${lon}`;
+
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+
+    document.getElementById('output').innerText = JSON.stringify(data, null, 2);
+
+    map.setView([lat, lon], 10);
+
+    if (marker) {
+      map.removeLayer(marker);
+    }
+
+    marker = L.marker([lat, lon]).addTo(map)
+      .bindPopup("Elevation: " + data.results[0].elevation)
+      .openPopup();
+
+  } catch (err) {
+    document.getElementById('output').innerText = 'Error: ' + err;
+  }
+}
+</script>
+
+</body>
+</html>
