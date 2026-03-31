@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terrain App (Frontend)</title>
+</head>
+<body>
+  <h1>Terrain Analysis App</h1>
+  <p>This is a lightweight frontend version of your Streamlit app.</p>
+
+  <button onclick="getTerrain()">Get Terrain Data</button>
+
+  <pre id="output"></pre>
+
+  <script>
+    async function getTerrain() {
+      const response = await fetch('https://your-backend-api.com/terrain');
+      const data = await response.json();
+      document.getElementById('output').innerText = JSON.stringify(data, null, 2);
+    }
+  </script>
+
+  <p><b>Note:</b> This HTML requires a backend API to replace Streamlit logic.</p>
+</body>
+</html>
