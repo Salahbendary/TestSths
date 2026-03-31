@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Standalone Terrain App</title>
+</head>
+<body>
+  <h2>Terrain Tool (Fully Frontend)</h2>
+
+  <label>Latitude:</label>
+  <input type="number" id="lat" step="any" value="30">
+  <br><br>
+
+  <label>Longitude:</label>
+  <input type="number" id="lon" step="any" value="31">
+  <br><br>
+
+  <button onclick="getTerrain()">Get Terrain</button>
+
+  <pre id="output"></pre>
+
+  <script>
+    async function getTerrain() {
+      const lat = document.getElementById('lat').value;
+      const lon = document.getElementById('lon').value;
+
+      const url = `https://api.opentopodata.org/v1/test-dataset?locations=${lat},${lon}`;
+
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        document.getElementById('output').innerText = JSON.stringify(data, null, 2);
+      } catch (err) {
+        document.getElementById('output').innerText = 'Error: ' + err;
+      }
+    }
+  </script>
+
+  <p><b>Note:</b> This version removes Python completely and uses public terrain API.</p>
+</body>
+</html>
