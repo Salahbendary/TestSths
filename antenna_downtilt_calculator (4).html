@@ -1,0 +1,1771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>📡 Antenna Downtilt Calculator</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#0b0f1a;--surface:#111827;--surface2:#1a2236;--border:#1e2d45;
+  --accent:#00d4ff;--text:#e2e8f0;--muted:#64748b;--muted2:#94a3b8;
+  --font:'Syne',sans-serif;--mono:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);}
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-track{background:var(--surface);}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+
+/* ── Layout ── */
+.layout{display:flex;min-height:100vh;}
+.sidebar{width:270px;min-width:270px;background:var(--surface);border-right:1px solid var(--border);padding:18px 14px;overflow-y:auto;position:sticky;top:0;height:100vh;}
+.main{flex:1;padding:18px 20px;overflow-x:hidden;min-width:0;}
+
+/* ── Header ── */
+.page-header{display:flex;align-items:center;gap:12px;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:14px;}
+.page-icon{width:36px;height:36px;background:linear-gradient(135deg,#0ea5e9,#0284c7);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+.page-title{font-size:1.1rem;font-weight:700;color:var(--text);}
+.page-sub{font-size:0.7rem;color:var(--muted);margin-top:2px;}
+.src-badge{display:inline-block;font-size:0.58rem;font-weight:600;font-family:var(--mono);padding:2px 7px;border-radius:4px;margin-left:6px;}
+.src-local{background:#dcfce7;color:#15803d;}
+.src-cloud{background:#fef3c7;color:#92400e;}
+
+/* ── Sidebar ── */
+.sb-label{font-size:0.57rem;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin-bottom:9px;margin-top:6px;}
+.input-group{margin-bottom:10px;}
+.input-label{font-size:0.7rem;color:var(--muted2);margin-bottom:4px;display:block;font-weight:500;}
+input[type=number],input[type=text]{width:100%;background:#0d1525;border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:0.78rem;padding:6px 9px;border-radius:6px;outline:none;transition:border-color .2s;}
+input[type=number]:focus{border-color:var(--accent);}
+.radio-group{display:flex;gap:5px;}
+.radio-btn{flex:1;padding:5px 0;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--muted2);font-size:0.7rem;cursor:pointer;text-align:center;font-weight:600;transition:all .2s;}
+.radio-btn.active{background:var(--accent);color:#000;border-color:var(--accent);}
+.converted{font-size:0.63rem;color:var(--accent);font-family:var(--mono);margin-top:2px;}
+hr.sb-div{border:none;border-top:1px solid var(--border);margin:10px 0;}
+.checkbox-row{display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:9px;}
+.checkbox-row input{width:14px;height:14px;accent-color:var(--accent);cursor:pointer;}
+.checkbox-label{font-size:0.75rem;color:var(--muted2);font-weight:500;}
+.btn-primary{width:100%;padding:8px 0;background:linear-gradient(135deg,#0ea5e9,#0284c7);border:none;border-radius:7px;color:#fff;font-family:var(--font);font-size:0.8rem;font-weight:700;cursor:pointer;transition:opacity .2s;display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px;}
+.btn-primary:hover{opacity:.9;}.btn-primary:disabled{opacity:.4;cursor:not-allowed;}
+.btn-secondary{width:100%;padding:6px 0;background:transparent;border:1px solid var(--border);border-radius:7px;color:var(--muted2);font-family:var(--font);font-size:0.75rem;font-weight:600;cursor:pointer;transition:all .2s;margin-top:5px;}
+.btn-secondary:hover{border-color:var(--muted);color:var(--text);}
+.src-info{font-size:0.63rem;color:#15803d;background:#dcfce7;border-radius:5px;padding:5px 8px;margin-bottom:5px;line-height:1.5;}
+.api-notice{font-size:0.61rem;color:var(--muted);background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:5px 8px;margin-top:4px;line-height:1.4;}
+
+/* ── Status bar ── */
+.status-bar{border-radius:7px;padding:7px 12px;font-family:var(--mono);font-size:0.66rem;color:var(--muted2);margin-bottom:12px;border:1px solid var(--border);border-left:3px solid;}
+.status-ok{background:var(--surface);border-left-color:#22c55e;}
+.status-err{background:var(--surface);border-left-color:#ef4444;}
+.status-idle{background:var(--surface);border-left-color:var(--muted);}
+
+/* ── Metric cards ── */
+.metrics-row{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:9px;}
+.metric-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:13px 15px;}
+.metric-label{font-size:0.57rem;font-weight:700;text-transform:uppercase;letter-spacing:1.1px;color:var(--muted);margin-bottom:5px;}
+.metric-value{font-family:var(--mono);font-size:1.2rem;font-weight:700;color:#0d9488;line-height:1.1;margin-bottom:3px;}
+.metric-sub{font-size:0.64rem;color:var(--muted);margin-top:3px;}
+.assume-box{font-size:0.67rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 11px;margin-bottom:11px;line-height:1.6;}
+.assume-box code{background:#1e3a5f;color:#38bdf8;padding:1px 5px;border-radius:3px;font-family:var(--mono);font-size:0.64rem;}
+
+/* ── Terrain stats ── */
+.tstat-row{display:flex;gap:7px;margin:7px 0 11px;flex-wrap:wrap;}
+.tstat{flex:1;min-width:85px;background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:9px;text-align:center;}
+.tstat-val{font-family:var(--mono);font-size:0.88rem;font-weight:700;color:#d97706;}
+.tstat-lbl{font-size:0.57rem;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin-top:3px;}
+
+/* ── Section headers ── */
+.sec-hdr{font-size:0.85rem;font-weight:700;color:var(--text);margin:14px 0 7px;border-bottom:1px solid var(--border);padding-bottom:5px;}
+.sec-caption{font-size:0.7rem;color:var(--muted);margin-bottom:7px;}
+
+/* ── Slider ── */
+.slider-row{margin-bottom:7px;}
+.slider-label{font-size:0.7rem;color:var(--muted2);margin-bottom:4px;display:flex;justify-content:space-between;}
+input[type=range]{width:100%;-webkit-appearance:none;height:4px;border-radius:2px;background:var(--border);outline:none;cursor:pointer;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--accent);border:2px solid #fff;cursor:pointer;}
+.slider-info{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:9px;}
+.slider-metric{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:8px 10px;}
+.slider-metric .lbl{font-size:0.57rem;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:3px;}
+.slider-metric .val{font-family:var(--mono);font-size:0.78rem;font-weight:700;color:var(--text);}
+
+/* ── Charts ── */
+.chart-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:11px;}
+.map-lobe-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:11px;}
+
+/* ── Legend box ── */
+.legend-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:11px 13px;margin-bottom:11px;}
+.legend-title{font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--muted);margin-bottom:7px;}
+.legend-row{display:flex;flex-wrap:wrap;gap:11px;margin-bottom:9px;}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:0.7rem;color:var(--muted2);font-weight:500;}
+.leg-box{width:12px;height:12px;border-radius:3px;flex-shrink:0;border:1.5px solid;}
+.leg-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
+.sm-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;}
+.sm-card{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 11px;}
+.sm-lbl{font-size:0.58rem;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:3px;}
+.sm-val{font-family:var(--mono);font-size:0.82rem;font-weight:700;color:var(--text);}
+
+/* ── Map — full-width, taller since lobe chart is removed ── */
+/* To change map height: edit the px value on the next line */
+#map{width:100%;height:560px;border-radius:8px;overflow:hidden;}
+.map-wrapper{position:relative;}
+.click-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 13px;margin-top:7px;display:flex;align-items:center;gap:11px;flex-wrap:wrap;}
+.click-icon{width:28px;height:28px;background:#7c3aed;border-radius:7px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;}
+.click-body{flex:1;min-width:200px;}
+.click-title{font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:5px;}
+.click-fields{display:flex;gap:18px;flex-wrap:wrap;}
+.click-field{font-family:var(--mono);font-size:0.9rem;font-weight:700;color:#a78bfa;}
+.click-field span{font-size:0.58rem;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;display:block;margin-bottom:2px;}
+.click-hint{font-size:0.65rem;color:var(--muted);margin-top:4px;}
+.click-idle{background:var(--surface);border:1px dashed var(--border);border-radius:8px;padding:8px 13px;margin-top:7px;font-size:0.7rem;color:var(--muted);display:flex;align-items:center;gap:6px;}
+.map-footer{display:flex;align-items:center;justify-content:space-between;margin-top:7px;flex-wrap:wrap;gap:7px;}
+.map-meta{font-family:var(--mono);font-size:0.62rem;color:var(--muted);}
+.btn-export{padding:6px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--muted2);font-family:var(--font);font-size:0.7rem;font-weight:600;cursor:pointer;transition:all .2s;white-space:nowrap;}
+.btn-export:hover{border-color:var(--accent);color:var(--accent);}
+
+/* ── Spinner ── */
+.spinner-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;z-index:9999;}
+.spinner-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:26px 34px;text-align:center;}
+.spinner{width:38px;height:38px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 13px;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.spinner-text{font-size:0.78rem;color:var(--muted2);}
+
+/* ══════════════════════════════════
+   EXCEL IMPORT PANEL
+══════════════════════════════════ */
+.excel-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:14px;overflow:hidden;}
+.excel-panel-hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;transition:background .15s;}
+.excel-panel-hdr:hover{background:var(--surface2);}
+.excel-hdr-left{display:flex;align-items:center;gap:10px;}
+.excel-icon{width:28px;height:28px;background:linear-gradient(135deg,#16a34a,#15803d);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;}
+.excel-hdr-title{font-size:0.85rem;font-weight:700;color:var(--text);}
+.excel-hdr-sub{font-size:0.63rem;color:var(--muted);margin-top:1px;}
+.excel-chevron{font-size:0.72rem;color:var(--muted);transition:transform .2s;display:inline-block;}
+.excel-chevron.open{transform:rotate(180deg);}
+.excel-panel-body{padding:14px 16px;display:none;}
+.excel-panel-body.open{display:block;}
+
+/* Upload zone */
+.upload-zone{border:2px dashed var(--border);border-radius:9px;padding:22px 14px;text-align:center;cursor:pointer;transition:all .2s;background:var(--surface2);position:relative;}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:#0a1628;}
+.upload-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+.upload-icon{font-size:2rem;margin-bottom:7px;}
+.upload-text{font-size:0.78rem;color:var(--muted2);font-weight:600;}
+.upload-sub{font-size:0.62rem;color:var(--muted);margin-top:4px;line-height:1.5;}
+
+/* File loaded */
+.file-summary{display:flex;align-items:center;justify-content:space-between;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;margin-bottom:12px;}
+.file-summary-left{display:flex;align-items:center;gap:8px;}
+.file-dot{width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0;}
+.file-name{font-size:0.7rem;font-weight:700;color:var(--text);font-family:var(--mono);}
+.file-meta{font-size:0.61rem;color:var(--muted);margin-top:2px;}
+.btn-clear-file{background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:0.63rem;padding:3px 8px;cursor:pointer;font-family:var(--font);transition:all .2s;}
+.btn-clear-file:hover{border-color:#ef4444;color:#ef4444;}
+
+/* ── Show-all toggle (Change 3) ── */
+.show-all-row{display:flex;align-items:center;justify-content:space-between;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 13px;margin-bottom:12px;}
+.show-all-left{display:flex;flex-direction:column;gap:2px;}
+.show-all-title{font-size:0.78rem;font-weight:700;color:var(--text);}
+.show-all-sub{font-size:0.62rem;color:var(--muted);}
+.toggle-switch{position:relative;width:42px;height:23px;flex-shrink:0;}
+.toggle-switch input{opacity:0;width:0;height:0;}
+.toggle-slider{position:absolute;cursor:pointer;inset:0;background:#334155;border-radius:23px;transition:.3s;}
+.toggle-slider:before{content:'';position:absolute;height:17px;width:17px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s;}
+.toggle-switch input:checked+.toggle-slider{background:var(--accent);}
+.toggle-switch input:checked+.toggle-slider:before{transform:translateX(19px);}
+
+/* ── Filter section (Change 2) ── */
+.filter-section{margin-bottom:10px;}
+.filter-label{font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin-bottom:8px;}
+.filter-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:9px;}
+.filter-item label{font-size:0.58rem;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:3px;display:block;}
+select.filter-select{width:100%;background:#0d1525;border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:0.7rem;padding:6px 8px;border-radius:6px;outline:none;cursor:pointer;transition:border-color .2s;-webkit-appearance:none;}
+select.filter-select:focus{border-color:var(--accent);}
+.filter-actions{display:flex;gap:6px;}
+.btn-apply-filter{flex:2;padding:7px 0;background:linear-gradient(135deg,#0ea5e9,#0284c7);border:none;border-radius:6px;color:#fff;font-family:var(--font);font-size:0.75rem;font-weight:700;cursor:pointer;transition:opacity .2s;}
+.btn-apply-filter:hover{opacity:.88;}
+.btn-clear-filter{flex:1;padding:7px 0;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--muted2);font-family:var(--font);font-size:0.72rem;font-weight:600;cursor:pointer;transition:all .2s;}
+.btn-clear-filter:hover{border-color:var(--muted);color:var(--text);}
+
+/* Results + region legend */
+.results-bar{display:flex;align-items:center;justify-content:space-between;font-size:0.67rem;color:var(--muted);margin-top:10px;flex-wrap:wrap;gap:6px;}
+.results-count{font-family:var(--mono);font-weight:700;color:var(--accent);}
+.region-legend{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+.region-chip{display:flex;align-items:center;gap:4px;font-size:0.62rem;font-weight:600;color:var(--muted2);background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:2px 8px;}
+.region-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+
+/* ── Text-filter inputs (Sub Region single) ── */
+.filter-text-input{
+  width:100%;background:#0d1525;border:1px solid var(--border);color:var(--text);
+  font-family:var(--mono);font-size:0.75rem;padding:6px 9px;border-radius:6px;
+  outline:none;transition:border-color .2s;
+}
+.filter-text-input:focus{border-color:var(--accent);}
+.filter-text-input.has-match{border-color:#22c55e !important;background:#071a0d;}
+.filter-text-input.no-match{border-color:#ef4444 !important;}
+.filter-match-hint{font-size:0.58rem;margin-top:2px;font-family:var(--mono);}
+.filter-match-hint.ok{color:#22c55e;}
+.filter-match-hint.err{color:#ef4444;}
+.filter-match-hint.none{color:var(--muted);}
+
+/* ── Tag / chip multi-select (Site ID + Cell Name) ── */
+.tag-wrap{
+  background:#0d1525;border:1px solid var(--border);border-radius:6px;
+  padding:4px 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;
+  min-height:34px;transition:border-color .2s;cursor:text;
+}
+.tag-wrap:focus-within{border-color:var(--accent);}
+.tag-wrap.has-tags{border-color:rgba(59,130,246,.55);}
+.tag-chip{
+  display:inline-flex;align-items:center;gap:3px;
+  background:rgba(37,99,235,.22);border:1px solid rgba(59,130,246,.45);
+  border-radius:4px;padding:2px 7px 2px 7px;
+  font-size:0.68rem;font-family:var(--mono);color:#93c5fd;font-weight:600;
+  white-space:nowrap;max-width:130px;
+}
+.tag-chip span{overflow:hidden;text-overflow:ellipsis;}
+.tag-x{
+  cursor:pointer;color:#64748b;font-size:0.72rem;line-height:1;
+  padding:0 1px;border-radius:2px;flex-shrink:0;
+}
+.tag-x:hover{color:#f87171;background:rgba(239,68,68,.15);}
+.tag-inner-input{
+  border:none;background:transparent;color:var(--text);
+  font-family:var(--mono);font-size:0.75rem;outline:none;
+  flex:1;min-width:70px;padding:1px 2px;
+}
+.tag-count{
+  font-size:0.6rem;font-family:var(--mono);color:var(--accent);
+  background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);
+  border-radius:3px;padding:1px 5px;white-space:nowrap;
+}
+.tag-hint{font-size:0.57rem;color:var(--muted);margin-top:2px;line-height:1.4;}
+.tag-hint b{color:var(--muted2);}
+
+/* ── Auto-populated cell banner (Change 6) ── */
+.cell-loaded-banner{
+  background:linear-gradient(135deg,rgba(6,182,212,.12),rgba(16,185,129,.08));
+  border:1px solid rgba(6,182,212,.35);border-radius:8px;
+  padding:10px 13px;margin-bottom:10px;
+}
+.cell-loaded-title{font-size:0.65rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:1px;color:#06b6d4;margin-bottom:6px;display:flex;align-items:center;gap:5px;}
+.cell-loaded-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;}
+.cell-loaded-item{font-size:0.68rem;color:var(--muted2);}
+.cell-loaded-item b{color:var(--text);font-family:var(--mono);}
+.cell-loaded-clear{font-size:0.62rem;color:var(--muted);background:none;border:none;cursor:pointer;
+  padding:0;text-decoration:underline;float:right;font-family:var(--font);}
+.cell-loaded-clear:hover{color:#ef4444;}
+
+/* ── Sub-region filter badge ── */
+.subr-active-badge{
+  display:inline-flex;align-items:center;gap:5px;
+  background:rgba(0,212,255,.12);border:1px solid rgba(0,212,255,.3);
+  border-radius:5px;padding:3px 8px;font-size:0.62rem;font-weight:600;
+  color:var(--accent);font-family:var(--mono);margin-bottom:8px;width:100%;
+}
+.subr-active-badge .subr-x{cursor:pointer;opacity:.7;margin-left:auto;}
+.subr-active-badge .subr-x:hover{opacity:1;color:#ef4444;}
+
+/* Cell popup */
+.cell-popup{font-family:'Syne',sans-serif;min-width:190px;}
+.cell-popup-title{font-size:0.82rem;font-weight:700;color:#1e293b;margin-bottom:6px;border-bottom:1px solid #dde3ec;padding-bottom:4px;}
+.cell-popup-row{display:flex;justify-content:space-between;font-size:0.68rem;margin-bottom:3px;}
+.cell-popup-key{font-weight:600;color:#64748b;}
+.cell-popup-val{font-family:'JetBrains Mono',monospace;font-weight:700;color:#0f172a;}
+.cell-popup-btn{width:100%;margin-top:8px;padding:5px 0;background:#0ea5e9;border:none;border-radius:5px;color:#fff;font-size:0.7rem;font-weight:700;cursor:pointer;font-family:'Syne',sans-serif;}
+.cell-popup-btn:hover{background:#0284c7;}
+
+@media(max-width:900px){
+  .layout{flex-direction:column;}
+  .sidebar{width:100%;height:auto;position:static;}
+  .map-lobe-grid{grid-template-columns:1fr;}
+  .metrics-row{grid-template-columns:1fr;}
+  .filter-grid{grid-template-columns:1fr;}
+}
+</style>
+</head>
+<body>
+
+<div class="spinner-overlay" id="spinner" style="display:none">
+  <div class="spinner-box">
+    <div class="spinner"></div>
+    <div class="spinner-text" id="spinner-text">Loading…</div>
+  </div>
+</div>
+
+<div class="layout">
+<!-- ══════════════ SIDEBAR ══════════════ -->
+<aside class="sidebar">
+  <div class="sb-label">⚙ Single-Cell Analysis</div>
+
+  <div class="input-group">
+    <div class="input-label">Unit System</div>
+    <div class="radio-group">
+      <button class="radio-btn active" id="btn-metric" onclick="setUnits('metric')">Metric</button>
+      <button class="radio-btn" id="btn-imperial" onclick="setUnits('imperial')">USA (ft/mi)</button>
+    </div>
+  </div>
+
+  <div class="input-group">
+    <label class="input-label" id="lbl-height">Antenna Height (m)</label>
+    <input type="number" id="inp-height" value="30" min="1" step="1" oninput="onParamChange()"/>
+  </div>
+  <div class="input-group">
+    <label class="input-label">Downtilt (°)</label>
+    <input type="number" id="inp-downtilt" value="6" min="0.1" max="89" step="0.5" oninput="onParamChange()"/>
+  </div>
+  <div class="input-group">
+    <label class="input-label">Vertical Beamwidth (°)</label>
+    <input type="number" id="inp-vbw" value="6" min="1" max="90" step="0.5" oninput="onParamChange()"/>
+  </div>
+  <div class="input-group">
+    <label class="input-label">Horizontal Beamwidth (°)</label>
+    <input type="number" id="inp-hbw" value="65" min="1" max="360" step="1" oninput="onParamChange()"/>
+  </div>
+  <div class="input-group">
+    <label class="input-label" id="lbl-dist">Profile Distance (m)</label>
+    <input type="number" id="inp-dist" value="1000" min="100" step="100" oninput="onParamChange()"/>
+    <div class="converted" id="conv-dist"></div>
+  </div>
+
+  <hr class="sb-div"/>
+  <label class="checkbox-row">
+    <input type="checkbox" id="chk-terrain" checked onchange="onTerrainToggle()"/>
+    <span class="checkbox-label">Include elevation profile</span>
+  </label>
+  <div id="terrain-section">
+    <div class="input-group">
+      <label class="input-label">Site Latitude (°)</label>
+      <input type="number" id="inp-lat" value="30.0028686" step="0.0001" oninput="onParamChange()"/>
+    </div>
+    <div class="input-group">
+      <label class="input-label">Site Longitude (°)</label>
+      <input type="number" id="inp-lon" value="31.0719953" step="0.0001" oninput="onParamChange()"/>
+    </div>
+    <div class="input-group">
+      <label class="input-label">Antenna Azimuth (°)</label>
+      <input type="number" id="inp-az" value="80" min="0" max="360" step="1" oninput="onParamChange()"/>
+    </div>
+    <div class="src-info">🌍 <b>Open-Topo-Data SRTM 30m</b> — free, no API key</div>
+    <div class="api-notice">API: opentopodata.org · Free · CORS-enabled</div>
+    <button class="btn-primary" id="btn-fetch" onclick="fetchElevationProfile()"><span>↻</span> Fetch Elevation Profile</button>
+  </div>
+
+  <hr class="sb-div"/>
+  <button class="btn-secondary" onclick="resetAll()">↺ Reset All</button>
+</aside>
+
+<!-- ══════════════ MAIN ══════════════ -->
+<main class="main">
+
+  <!-- Header -->
+  <div class="page-header">
+    <div class="page-icon">📡</div>
+    <div>
+      <div class="page-title">Antenna Downtilt Calculator
+        <span class="src-badge src-cloud">☁ Open-Topo-Data SRTM 30m</span>
+      </div>
+      <div class="page-sub">Single-cell lobe analysis · Excel bulk sector visualization</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       EXCEL IMPORT PANEL  (Changes 1, 2, 3)
+  ══════════════════════════════════════ -->
+  <div class="excel-panel">
+    <div class="excel-panel-hdr" onclick="toggleExcelPanel()">
+      <div class="excel-hdr-left">
+        <div class="excel-icon">📊</div>
+        <div>
+          <div class="excel-hdr-title">Excel Import — Bulk Sector Visualization</div>
+          <div class="excel-hdr-sub" id="excel-hdr-sub">Upload: Site ID, Cell Name, Latitude, Longitude, Azimuth, Sub Region, Height, Tilt</div>
+        </div>
+      </div>
+      <span class="excel-chevron open" id="excel-chevron">▼</span>
+    </div>
+
+    <div class="excel-panel-body open" id="excel-panel-body">
+
+      <!-- ── CHANGE 1: Upload Button ── -->
+      <div id="upload-zone-wrap">
+        <div class="upload-zone" id="upload-zone"
+             ondragover="event.preventDefault();this.classList.add('drag')"
+             ondragleave="this.classList.remove('drag')"
+             ondrop="onFileDrop(event)">
+          <input type="file" id="excel-file-input" accept=".xlsx,.xls,.csv" onchange="onFileSelected(event)"/>
+          <div class="upload-icon">📂</div>
+          <div class="upload-text">Click to upload Excel / CSV file</div>
+          <div class="upload-sub">Drag &amp; drop supported · .xlsx · .xls · .csv<br>Required columns: Latitude, Longitude, Azimuth<br>Optional: Site ID, Cell Name, Sub Region, Height, Tilt</div>
+        </div>
+      </div>
+
+      <!-- Shown after file is loaded -->
+      <div id="file-loaded-wrap" style="display:none">
+
+        <!-- File summary pill -->
+        <div class="file-summary">
+          <div class="file-summary-left">
+            <div class="file-dot"></div>
+            <div>
+              <div class="file-name" id="file-name-lbl">—</div>
+              <div class="file-meta" id="file-meta-lbl">—</div>
+            </div>
+          </div>
+          <button class="btn-clear-file" onclick="clearFile()">✕ Clear</button>
+        </div>
+
+        <!-- ── CHANGE 6: Auto-populated cell banner ── -->
+        <div id="cell-loaded-banner" style="display:none">
+          <div class="cell-loaded-banner">
+            <div class="cell-loaded-title">
+              ✅ Cell Loaded into Analyzer
+              <button class="cell-loaded-clear" onclick="clearCellSelection()">✕ clear</button>
+            </div>
+            <div class="cell-loaded-grid" id="cell-loaded-grid"></div>
+          </div>
+        </div>
+
+        <!-- ── CHANGE 3 + 5: Show Sub-Region toggle ── -->
+        <div class="show-all-row">
+          <div class="show-all-left">
+            <div class="show-all-title">🗺 Show Sub-Region Sectors on Map</div>
+            <div class="show-all-sub" id="show-all-sub">Shows only the filtered sub-region</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="chk-show-all" onchange="onShowAllToggle()"/>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <!-- Sub-region active indicator (Change 5) -->
+        <div id="subr-badge" style="display:none" class="subr-active-badge">
+          <span>🗺</span>
+          <span id="subr-badge-text">Showing: —</span>
+          <span class="subr-x" onclick="clearSubRegionFilter()">✕</span>
+        </div>
+
+        <!-- ── CHANGE 2 + 4: Text inputs for Sub Region · Site ID · Cell Name ── -->
+        <div class="filter-section">
+          <div class="filter-label">🔍 Filter &amp; Select Cell</div>
+
+          <!-- Sub Region text input -->
+          <div class="input-group" style="margin-bottom:8px">
+            <label class="input-label">📍 Sub Region</label>
+            <input type="text" class="filter-text-input" id="inp-subregion"
+                   list="dl-subregion" placeholder="Type sub region name…"
+                   oninput="onFilterInput('subregion')" autocomplete="off"/>
+            <datalist id="dl-subregion"></datalist>
+            <div class="filter-match-hint none" id="hint-subregion"></div>
+          </div>
+
+          <!-- Site ID multi-tag input -->
+          <div class="input-group" style="margin-bottom:8px">
+            <label class="input-label">🏗 Site ID <span id="siteid-count" class="tag-count" style="display:none"></span></label>
+            <div class="tag-wrap" id="tw-siteid" onclick="document.getElementById('inp-siteid').focus()">
+              <input type="text" class="tag-inner-input" id="inp-siteid"
+                     list="dl-siteid" placeholder="Type + ↵ to add…"
+                     oninput="onTagInput('siteid')"
+                     onkeydown="onTagKey(event,'siteid')"
+                     onchange="onTagChange('siteid')"
+                     autocomplete="off"/>
+              <datalist id="dl-siteid"></datalist>
+            </div>
+            <div class="tag-hint">Press <b>Enter</b> or <b>,</b> to add · select multiple · click <b>✕</b> to remove</div>
+          </div>
+
+          <!-- Cell Name multi-tag input -->
+          <div class="input-group" style="margin-bottom:8px">
+            <label class="input-label">📡 Cell Name <span id="cellname-count" class="tag-count" style="display:none"></span></label>
+            <div class="tag-wrap" id="tw-cellname" onclick="document.getElementById('inp-cellname').focus()">
+              <input type="text" class="tag-inner-input" id="inp-cellname"
+                     list="dl-cellname" placeholder="Type + ↵ to add…"
+                     oninput="onTagInput('cellname')"
+                     onkeydown="onTagKey(event,'cellname')"
+                     onchange="onTagChange('cellname')"
+                     autocomplete="off"/>
+              <datalist id="dl-cellname"></datalist>
+            </div>
+            <div class="tag-hint">Press <b>Enter</b> or <b>,</b> to add · select multiple · click <b>✕</b> to remove</div>
+          </div>
+
+          <div class="filter-actions">
+            <button class="btn-apply-filter" onclick="applyFilters()">▶ Apply to Map</button>
+            <button class="btn-clear-filter" onclick="clearFilters()">✕ Clear All</button>
+          </div>
+        </div>
+
+        <!-- Results count + region color legend -->
+        <div id="results-bar" style="display:none">
+          <div class="results-bar">
+            <span>Showing <span class="results-count" id="results-count">0</span> sectors on map</span>
+          </div>
+          <div class="region-legend" id="region-legend"></div>
+        </div>
+
+      </div><!-- /file-loaded-wrap -->
+    </div><!-- /excel-panel-body -->
+  </div><!-- /excel-panel -->
+
+  <!-- Status bar -->
+  <div class="status-bar status-idle" id="status-bar">Flat model · waiting for inputs…</div>
+
+  <!-- Metric cards -->
+  <div class="metrics-row">
+    <div class="metric-card">
+      <div class="metric-label">Main Lobe Impact Point</div>
+      <div class="metric-value" id="metric-main">—</div>
+      <div class="metric-sub" id="metric-main-sub">Ground intersection of central lobe</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Footprint Coverage</div>
+      <div class="metric-value" style="font-size:1.05rem" id="metric-footprint">—</div>
+      <div class="metric-sub" id="metric-foot-sub">Near edge → Far edge</div>
+    </div>
+  </div>
+
+  <div class="assume-box">
+    <strong>Assumption:</strong> VBW <code id="a-vbw">6.0°</code> · HBW <code id="a-hbw">65°</code> · Units: <span id="a-units">Metric</span>
+  </div>
+
+  <div id="tstat-section" style="display:none"><div class="tstat-row" id="tstat-row"></div></div>
+
+  <!-- Visual Profile -->
+  <div class="sec-hdr">Visual Profile</div>
+  <div class="slider-row">
+    <div class="slider-label"><span>Footprint vs selected distance</span><span id="slider-val-lbl">0 m</span></div>
+    <input type="range" id="slider-dist" min="0" max="1000" value="250" step="1" oninput="onSliderChange()"/>
+  </div>
+  <div class="slider-info">
+    <div class="slider-metric"><div class="lbl">📍 Position</div><div class="val" id="sl-pos">—</div></div>
+    <div class="slider-metric"><div class="lbl">⛰ Terrain Elev</div><div class="val" id="sl-elev">—</div></div>
+    <div class="slider-metric"><div class="lbl">📶 Footprint</div><div class="val" id="sl-fp">—</div></div>
+  </div>
+  <div class="chart-box"><div id="chart-terrain" style="height:380px"></div></div>
+
+  <!-- Sector legend -->
+  <div class="legend-box">
+    <div class="legend-title">Sector Metrics — Single Cell</div>
+    <div class="legend-row">
+      <div class="leg-item"><div class="leg-box" style="background:rgba(14,165,233,.10);border-color:#0ea5e9;"></div>Sector outline</div>
+      <div class="leg-item"><div class="leg-box" style="background:rgba(74,222,128,.22);border-color:#4ade80;"></div>Footprint zone</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#0ea5e9;"></div>Site</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#0d9488;"></div>Main Lobe Hit</div>
+    </div>
+    <div class="sm-grid">
+      <div class="sm-card"><div class="sm-lbl">Main Lobe</div><div class="sm-val" id="sm-main">—</div></div>
+      <div class="sm-card"><div class="sm-lbl">Footprint</div><div class="sm-val" id="sm-foot" style="font-size:.75rem">—</div></div>
+    </div>
+  </div>
+
+  <!-- ── FEATURE 1: Sector Map — full width (lobe chart removed) ── -->
+  <!-- To restore lobe chart: add a 2-column grid here and re-add the #lobe-col div -->
+  <div id="map-lobe-grid">
+    <div>
+      <div class="sec-hdr">Sector Map</div>
+      <div class="sec-caption" id="map-caption">Single-cell sector. Load an Excel file to visualize bulk sectors.</div>
+      <div class="map-wrapper"><div id="map"></div></div>  <!-- Leaflet map renders here — height set in CSS #map -->
+      <div id="click-card">
+        <div class="click-idle">🖱 Click the map to see coordinates and distance from site</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="map-footer">
+    <div class="map-meta" id="map-meta"></div>
+    <button class="btn-export" onclick="exportKmz()">⬇ Export Sector KMZ</button>
+  </div>
+
+</main>
+</div>
+
+<script>
+// ════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════
+// APPLICATION STATE  — single source of truth for all live values
+// To add a new state property: add it here with a sensible default,
+// then read/write it in the relevant compute/UI functions below.
+// ════════════════════════════════════════════════════════════════════════
+const S={
+  // ── Single-cell analysis inputs ──
+  units:'metric',         // 'metric' | 'imperial' — controls fmtD() output and input labels
+  hRaw:30,                // raw antenna height in the selected unit (m or ft)
+  dtDeg:6,                // downtilt angle in degrees (mechanical + electrical combined)
+  vbw:6,                  // vertical beamwidth (half-power) in degrees
+  hbw:65,                 // horizontal beamwidth (half-power) in degrees
+  dRaw:1000,              // terrain profile length in selected unit (m or ft)
+  terrainOn:true,         // whether to fetch and use real DEM elevation data
+  siteLat:30.0028686,     // site latitude  (WGS-84 decimal degrees)
+  siteLon:31.0719953,     // site longitude (WGS-84 decimal degrees)
+  azDeg:80,               // antenna azimuth bearing (0–360°, clockwise from North)
+
+  // ── DEM / elevation profile state ──
+  demD:null,              // Float64Array of sample distances (m) — null when not loaded
+  demElev:null,           // Float64Array of sample elevations (m MSL) — null when not loaded
+  demStatus:null,         // 'ok' | 'error' | null — last fetch result
+  demMsg:'',              // human-readable message for the status bar
+  demSource:'',           // label of the elevation source that was used
+
+  // ── Computed geometry results ──
+  mainD:0,                // main-lobe terrain hit distance (m) — updated in compute()
+  nearD:0,                // near-lobe terrain hit distance (m)
+  farD:0,                 // far-lobe terrain hit distance (m)
+  sliderD:250,            // current position of the "selected distance" slider (m)
+
+  // ── Excel / bulk-sector state ──
+  excelRows:[],           // parsed rows from uploaded Excel file [{siteId,cell,lat,...}]
+  excelFile:'',           // filename of the last loaded Excel file
+  showAll:false,          // whether the "show sub-region" toggle is ON
+  filteredRows:[],        // subset of excelRows after applyFilters() — drawn on map
+  selectedSites:[],       // tag-chip multi-select: array of site ID strings
+  selectedCells:[],       // tag-chip multi-select: array of cell name strings
+
+  // ── Terrain statistics (computed in compute() when DEM is loaded) ──
+  avgSig:0,               // % of DEM profile samples where main lobe clears terrain
+  shadowPct:0,            // 100 - avgSig
+  firstObs:null,          // distance (m) of first terrain obstruction, or null
+};
+
+// ── hM / distM: working values always in METRES regardless of selected unit ──
+// These are derived from S.hRaw / S.dRaw by toM() inside compute() and onParamChange().
+// Do NOT set these directly — always call compute() or onParamChange() instead.
+let hM=30, distM=1000;
+
+// ── COLORS: 16-color palette cycling through sub-regions on the map legend ──
+// To change region colors: edit hex values here. Order matches assignment order.
+const COLORS=['#f97316','#3b82f6','#22c55e','#a855f7','#ef4444','#06b6d4',
+  '#f59e0b','#ec4899','#10b981','#6366f1','#84cc16','#14b8a6',
+  '#fb7185','#818cf8','#34d399','#fbbf24'];
+const regionColorMap={};  // memoization cache: regionName → hex color string
+
+// ── regionColor: assign (and cache) a color for each sub-region string ──
+// Colors are assigned in encounter order, cycling through COLORS array.
+function regionColor(r){
+  if(!regionColorMap[r]){
+    regionColorMap[r]=COLORS[Object.keys(regionColorMap).length%COLORS.length];
+  }
+  return regionColorMap[r];  // returns the same color for the same region every call
+}
+
+// ── COL_ALIASES: fuzzy column name mapping — add new Excel columns here ──
+// Format: internalKey: ['alias1','alias2',...] (all lowercase)
+// To add a new column: add a new key + alias array, then read it in parseExcel below.
+const COL_ALIASES={
+  siteid:      ['site id','siteid','site_id','site','id'],
+  cellname:    ['cell name','cellname','cell_name','cell','name','sector','cell id'],
+  lat:         ['latitude','lat','y','site latitude'],
+  lon:         ['longitude','lon','long','lng','x','site longitude'],
+  azimuth:     ['azimuth','az','bearing','direction','antenna azimuth'],
+  subregion:   ['sub region','subregion','sub_region','region','area','zone','sub-region'],
+  height:      ['height','antenna height','ant height','h','agl','ant_height'],
+  tilt:        ['tilt','downtilt','down tilt','etilt','mtilt','total tilt','mechanical tilt'],
+  // ── Feature 2: Time Advance column — add more aliases if your Excel uses different names ──
+  timeadvance: ['time advance','timeadvance','ta','timing advance','time_advance','ta (m)','ta(m)'],
+};
+function mapCols(headers){
+  const m={};
+  headers.forEach(h=>{
+    const hl=h.toLowerCase().trim();
+    for(const[k,aliases] of Object.entries(COL_ALIASES)){
+      if(!m[k]&&aliases.some(a=>hl===a||hl.startsWith(a))) m[k]=h;
+    }
+  });
+  return m;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// UNIT HELPERS
+// ════════════════════════════════════════════════════════════════════════
+
+// ── toM: convert a raw input value to metres based on current unit setting ──
+// Use this before any geometry calculation that expects metres.
+const toM=v=>S.units==='metric'?v:v*0.3048;  // 1 ft = 0.3048 m
+
+// ── fmtD: format a distance in metres as a human-readable string ──
+// Returns e.g. "1.23 km", "450 m", "0.76 mi", "250 ft" based on S.units.
+// dec controls decimal places shown for km/mi (default 2).
+function fmtD(m,dec=2){
+  if(S.units==='metric') return m>=1000?`${(m/1000).toFixed(dec)} km`:`${Math.round(m)} m`;
+  const ft=m/0.3048;  // convert metres → feet
+  return ft>=5280?`${(ft/5280).toFixed(dec)} mi`:`${Math.round(ft)} ft`;  // show miles if ≥1 mile
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// GEOMETRY / MATH HELPERS
+// ════════════════════════════════════════════════════════════════════════
+
+// ── flatGeom: pure flat-earth lobe distances (no terrain) ──
+// h=height(m), dt=downtilt(°), vbw=vertical beamwidth(°)
+// Returns {mainD, nearD, farD} — all in metres.
+// Used as fallback when no DEM is loaded, and for Excel popup info.
+function flatGeom(h,dt,vbw){
+  const dtR=dt*Math.PI/180;              // downtilt in radians
+  const hR=vbw/2*Math.PI/180;           // half-beamwidth in radians
+  const fa=Math.max(1e-4,dtR-hR);       // far-lobe angle (clamped > 0 to avoid div-by-zero)
+  return{
+    mainD:h/Math.tan(dtR),              // distance to centre of main lobe on flat ground
+    nearD:h/Math.tan(dtR+hR),           // distance to near (lower) lobe edge
+    farD: h/Math.tan(fa),               // distance to far (upper) lobe edge
+  };
+}
+
+// ── rayHit: find DEM intersection of a downward ray at angle ang° ──
+// h=AGL height(m), se=site elevation MSL(m), ang=depression angle(°)
+// dArr/eArr = DEM distance and elevation arrays (same length)
+// Returns hit distance in metres, or null if the ray clears all terrain.
+function rayHit(h,se,ang,dArr,eArr){
+  const t=ang*Math.PI/180;   // depression angle in radians
+  for(let i=1;i<dArr.length;i++){
+    const d0=dArr[i-1],e0=eArr[i-1],d1=dArr[i],e1=eArr[i];  // segment endpoints
+    const r0=se+h-d0*Math.tan(t),r1=se+h-d1*Math.tan(t);    // ray height at each endpoint
+    if(r0>=e0&&r1<=e1){  // ray crossed from above terrain to below terrain in this segment
+      const dn=(r0-r1)+(e1-e0);  // denominator for linear interpolation
+      return d0+(dn>1e-6?(r0-e0)/dn:0)*(d1-d0);  // interpolated hit distance
+    }
+  }
+  return null;  // ray never hit terrain (clears entire profile)
+}
+
+// ── gcDest: great-circle destination given origin, bearing, and distance ──
+// Returns [lat°, lon°] of the destination point.
+// Used to build sector polygons and DEM profile sample coordinates.
+function gcDest(lat,lon,bear,d){
+  const R=6371000;              // Earth mean radius in metres
+  const b=bear*Math.PI/180;    // bearing in radians
+  const dr=d/R;                 // angular distance (radians)
+  const la1=lat*Math.PI/180, lo1=lon*Math.PI/180;  // origin in radians
+  const la2=Math.asin(Math.sin(la1)*Math.cos(dr)+Math.cos(la1)*Math.sin(dr)*Math.cos(b));
+  const lo2=lo1+Math.atan2(Math.sin(b)*Math.sin(dr)*Math.cos(la1),Math.cos(dr)-Math.sin(la1)*Math.sin(la2));
+  return[la2*180/Math.PI, lo2*180/Math.PI];  // return as decimal degrees
+}
+
+// ── ls: linspace — generate n evenly-spaced values from a to b ──
+function ls(a,b,n){const arr=new Float64Array(n),s=(b-a)/(n-1);for(let i=0;i<n;i++)arr[i]=a+i*s;return arr;}
+
+// ── interp: linear interpolation of ys at x, given sorted xs array ──
+function interp(x,xs,ys){
+  if(x<=xs[0])return ys[0];             // clamp left
+  if(x>=xs[xs.length-1])return ys[ys.length-1];  // clamp right
+  let lo=0,hi=xs.length-1;
+  while(hi-lo>1){const m=(lo+hi)>>1;xs[m]<=x?lo=m:hi=m;}  // binary search bracket
+  return ys[lo]+(x-xs[lo])/(xs[hi]-xs[lo])*(ys[hi]-ys[lo]);  // lerp
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// LOBE RAY + POLYGON HELPERS
+// These build the filled lobe shapes on both charts.
+// ════════════════════════════════════════════════════════════════════════
+
+// ── clipRay: walk DEM profile and clip ray at first terrain intersection ──
+// Returns {x, y} arrays for the above-terrain portion of the ray only.
+// se=site elevation, h=AGL height, ang=depression angle degrees
+function clipRay(xs,tY,se,h,ang){
+  const ta=Math.tan(ang*Math.PI/180);   // tan of depression angle
+  const rY=xs.map(x=>se+h-x*ta);       // absolute ray height at each sample distance
+  const xO=[],yO=[];
+  for(let i=0;i<xs.length;i++){
+    if(rY[i]>=tY[i]){                   // ray still above terrain → include this point
+      xO.push(xs[i]);yO.push(rY[i]);
+    }else{                              // ray hit terrain → interpolate exact crossing
+      if(i>0){
+        const r0=rY[i-1],r1=rY[i],t0=tY[i-1],t1=tY[i];
+        const dn=(r0-r1)-(t0-t1);       // slope-difference denominator
+        if(Math.abs(dn)>1e-6){
+          const f=(r0-t0)/dn;           // fractional crossing position
+          xO.push(xs[i-1]+f*(xs[i]-xs[i-1]));  // interpolated x
+          yO.push(t0+f*(t1-t0));        // interpolated y (on terrain surface)
+        }
+      }
+      break;  // stop — everything beyond the hit is underground
+    }
+  }
+  if(!xO.length){xO.push(xs[0]);yO.push(se+h);}  // edge case: immediately blocked
+  return{x:xO,y:yO};
+}
+
+// ── lobePoly: build closed filled polygon between two clipped rays ──
+// rF=far ray (terminates further), rN=near ray; xs/tY=full terrain profile
+// The polygon closes by following the terrain between the two hit points.
+function lobePoly(rF,rN,xs,tY){
+  const xF=rF.x[rF.x.length-1],xN=rN.x[rN.x.length-1];  // terrain hit x of each ray
+  const bX=[],bY=[];
+  // Walk terrain from far hit back to near hit (reversed for correct winding)
+  for(let i=xs.length-1;i>=0;i--)if(xs[i]>=xN&&xs[i]<=xF){bX.push(xs[i]);bY.push(tY[i]);}
+  return{x:[...rF.x,...bX,...[...rN.x].reverse()],y:[...rF.y,...bY,...[...rN.y].reverse()]};
+}
+
+// ── lowerPoly: build the lower-lobe polygon from near ray back to site ──
+function lowerPoly(rN,xs,tY){
+  const xH=rN.x[rN.x.length-1];  // near-ray terrain hit distance
+  const bX=[],bY=[];
+  for(let i=xs.length-1;i>=0;i--)if(xs[i]<=xH){bX.push(xs[i]);bY.push(tY[i]);}
+  return{x:[...rN.x,...bX],y:[...rN.y,...bY]};
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// ELEVATION API — fetches terrain profile along a great-circle path
+// Primary:  Open-Topo-Data SRTM 30m  (free, no key, CORS-enabled)
+//           https://api.opentopodata.org/v1/srtm30m
+// Fallback: Open-Elevation REST API  (free, no key, slower)
+//           https://api.open-elevation.com/api/v1/lookup
+//
+// To switch to a different dataset: change the URL in the first fetch() call.
+// Available datasets on opentopodata.org: srtm30m, aster30m, eudem25m, etc.
+// ════════════════════════════════════════════════════════════════════════
+async function fetchDem(lat,lon,az,dM,n=100){
+  // ── Step 1: Build n evenly-spaced sample coordinates along the azimuth bearing ──
+  const lats=[],lons=[];
+  for(let i=0;i<n;i++){
+    const[la,lo]=gcDest(lat,lon,az,i/(n-1)*dM);  // great-circle point at fractional distance
+    lats.push(+la.toFixed(7));  // round to ~1 cm precision (7 decimal places)
+    lons.push(+lo.toFixed(7));
+  }
+  // ── Step 2: Format as pipe-delimited "lat,lon|lat,lon|…" string for API ──
+  const locStr=lats.map((la,i)=>`${la},${lons[i]}`).join('|');
+
+  // ── PRIMARY: Open-Topo-Data ──────────────────────────────────────────
+  // To change dataset: replace 'srtm30m' with another dataset name
+  try{
+    const r=await fetch(`https://api.opentopodata.org/v1/srtm30m?locations=${encodeURIComponent(locStr)}`,
+      {headers:{Accept:'application/json'}});
+    if(!r.ok)throw new Error(`HTTP ${r.status}`);
+    const d=await r.json();
+    if(d.status==='OK'&&d.results)
+      return{d:Array.from(ls(0,dM,n)), elev:d.results.map(r=>r.elevation??0), source:'Open-Topo-Data SRTM 30m'};
+    throw new Error('Unexpected response format');
+  }catch(e1){
+    // ── FALLBACK: Open-Elevation (POST, chunked to 25 points per request) ──
+    try{
+      const locs=lats.map((la,i)=>({latitude:la,longitude:lons[i]}));
+      const CHUNK=25;  // max points per request — increase if API allows, decrease if timeouts
+      const elevs=[];
+      for(let s=0;s<n;s+=CHUNK){
+        const r=await fetch('https://api.open-elevation.com/api/v1/lookup',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({locations:locs.slice(s,s+CHUNK)})  // send one chunk
+        });
+        if(!r.ok)throw new Error(`HTTP ${r.status}`);
+        const d=await r.json();
+        d.results.forEach(r=>elevs.push(r.elevation??0));  // accumulate elevations
+        if(s+CHUNK<n)await new Promise(r=>setTimeout(r,200));  // rate-limit: 200ms between chunks
+      }
+      return{d:Array.from(ls(0,dM,n)), elev:elevs, source:'Open-Elevation (cloud)'};
+    }catch(e2){
+      throw new Error(`All elevation APIs failed.\nPrimary: ${e1.message}\nFallback: ${e2.message}`);
+    }
+  }
+}
+
+// ════════════════════════════════════════════
+// CHANGE 1: EXCEL PARSING
+// ════════════════════════════════════════════
+function onFileSelected(e){const f=e.target.files[0];if(f)parseExcel(f);}
+function onFileDrop(e){
+  e.preventDefault();document.getElementById('upload-zone').classList.remove('drag');
+  const f=e.dataTransfer.files[0];if(f)parseExcel(f);
+}
+function parseExcel(file){
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});
+      if(!rows.length){alert('No data rows found in the file.');return;}
+      const cm=mapCols(Object.keys(rows[0]));
+      const missing=[];
+      ['lat','lon','azimuth'].forEach(k=>{if(!cm[k])missing.push(k);});
+      if(missing.length){alert(`Missing required columns: ${missing.join(', ')}\n\nFound: ${Object.keys(rows[0]).join(', ')}`);return;}
+      S.excelRows=rows.map((r,i)=>({
+        siteId:      cm.siteid      ? String(r[cm.siteid]||'').trim()      : `Site-${i+1}`,  // Site identifier
+        cell:        cm.cellname    ? String(r[cm.cellname]||'').trim()    : `Cell-${i+1}`,  // Cell / sector name
+        lat:         parseFloat(r[cm.lat])       ||0,                                         // Site latitude  (°)
+        lon:         parseFloat(r[cm.lon])       ||0,                                         // Site longitude (°)
+        az:          parseFloat(r[cm.azimuth])   ||0,                                         // Antenna azimuth (°)
+        region:      cm.subregion  ? String(r[cm.subregion]||'').trim()   : 'Unknown',        // Sub-region label
+        height:      cm.height     ? parseFloat(r[cm.height])||30         : 30,               // Antenna height AGL (m)
+        tilt:        cm.tilt       ? parseFloat(r[cm.tilt])  ||6          : 6,                // Mechanical/electrical tilt (°)
+        // ── Feature 2: Time Advance — read from Excel if column exists, else null ──
+        // To change the default when TA is missing: replace null with a number (e.g. 0)
+        timeAdvance: cm.timeadvance ? parseFloat(r[cm.timeadvance])        : null,            // Time Advance in m (optional)
+        hbw:65, vbw:6,  // default beamwidths — to read from Excel add 'hbw'/'vbw' to COL_ALIASES
+      })).filter(r=>r.lat!==0||r.lon!==0);  // drop rows with no valid coordinates
+      S.excelFile=file.name;S.filteredRows=[...S.excelRows];
+      onExcelLoaded();
+    }catch(err){alert('Error reading file: '+err.message);}
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function onExcelLoaded(){
+  document.getElementById('upload-zone-wrap').style.display='none';
+  document.getElementById('file-loaded-wrap').style.display='block';
+  document.getElementById('file-name-lbl').textContent=S.excelFile;
+  const regions=[...new Set(S.excelRows.map(r=>r.region))];
+  document.getElementById('file-meta-lbl').textContent=`${S.excelRows.length} cells · ${regions.length} sub-regions`;
+  document.getElementById('show-all-sub').textContent=`${S.excelRows.length} cells available`;
+  document.getElementById('excel-hdr-sub').textContent=`${S.excelRows.length} cells loaded from ${S.excelFile}`;
+  document.getElementById('results-bar').style.display='none';
+  document.getElementById('cell-loaded-banner').style.display='none';
+  document.getElementById('subr-badge').style.display='none';
+  S.selectedSites=[];S.selectedCells=[];
+  document.getElementById('inp-siteid').value='';
+  document.getElementById('inp-cellname').value='';
+  renderTags('siteid');renderTags('cellname');
+  document.getElementById('inp-subregion').value='';
+  document.getElementById('inp-subregion').className='filter-text-input';
+  document.getElementById('hint-subregion').textContent='';
+  populateDataLists();
+  updateMapCaption();
+}
+
+function populateDataLists(){
+  const regions=[...new Set(S.excelRows.map(r=>r.region))].sort();
+  const sites   =[...new Set(S.excelRows.map(r=>r.siteId))].sort();
+  const cells   =[...new Set(S.excelRows.map(r=>r.cell))].sort();
+  document.getElementById('dl-subregion').innerHTML=regions.map(v=>`<option value="${v}">`).join('');
+  document.getElementById('dl-siteid').innerHTML   =sites.map(v=>`<option value="${v}">`).join('');
+  document.getElementById('dl-cellname').innerHTML =cells.map(v=>`<option value="${v}">`).join('');
+}
+
+// ══════════════════════════════════════════════
+// TAG-CHIP MULTI-SELECT  (Site ID + Cell Name)
+// ══════════════════════════════════════════════
+
+// ── renderTags: rebuild chip pills inside the tag-wrap for 'siteid' or 'cellname' ──
+// BUG FIX: chips are direct children of `wrap` (not cEl), so we must query by
+// class, not by cEl.children, to avoid stale chips accumulating in the DOM.
+function renderTags(field){
+  const arr  = field==='siteid' ? S.selectedSites : S.selectedCells; // live array reference
+  const wrap = document.getElementById(`tw-${field}`);               // the visual container div
+  const inp  = document.getElementById(`inp-${field}`);              // the text input inside wrap
+  const cntEl= document.getElementById(`${field}-count`);            // "N selected" badge in label
+
+  // ── Step 1: Remove ALL existing chip elements from wrap (correct approach) ──
+  // Previous code wrongly targeted cEl.children; chips live directly in wrap.
+  wrap.querySelectorAll('.tag-chip').forEach(c => c.remove());
+
+  // ── Step 2: Create a fresh chip for every value in the array ──
+  arr.forEach((val, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'tag-chip';
+    // Use data-field + data-idx so removeTag reads from DOM, not from a closed-over index
+    chip.dataset.field = field;
+    chip.dataset.idx   = i;
+    chip.innerHTML = `<span title="${val}">${val}</span>` +
+      `<span class="tag-x" onclick="removeTagByEl(this)">✕</span>`;
+    wrap.insertBefore(chip, inp); // insert before the text input, not after
+  });
+
+  // ── Step 3: Update badge + placeholder ──
+  wrap.classList.toggle('has-tags', arr.length > 0);
+  if(arr.length > 0){ cntEl.style.display='inline'; cntEl.textContent=`${arr.length} selected`; }
+  else cntEl.style.display = 'none';
+  inp.placeholder = arr.length ? 'Add more…' : 'Type + ↵ to add…';
+
+  // ── Step 4: Refresh cascaded datalist + check auto-populate ──
+  refreshCellDatalist();
+  checkAutoPopulate();
+}
+
+// ── removeTagByEl: called by chip ✕ button; reads field + idx from parent chip's data attrs ──
+// This avoids stale index closures that caused the X-not-working bug.
+function removeTagByEl(xBtn){
+  const chip  = xBtn.closest('.tag-chip');           // walk up to the chip container
+  const field = chip.dataset.field;                  // 'siteid' or 'cellname'
+  const idx   = parseInt(chip.dataset.idx, 10);      // original index in the array
+  const arr   = field==='siteid' ? S.selectedSites : S.selectedCells;
+  arr.splice(idx, 1);   // remove one element at that index
+  renderTags(field);    // re-render all chips with updated indices
+}
+
+// Add a tag value to a field
+function addTag(field, rawVal){
+  const val = rawVal.trim();
+  if(!val) return false;
+  const arr = field==='siteid' ? S.selectedSites : S.selectedCells;
+  const pool = field==='siteid'
+    ? [...new Set(S.excelRows.map(r=>r.siteId))]
+    : [...new Set(S.excelRows.map(r=>r.cell))];
+  // Case-insensitive exact match required — reject partial/misspelled values
+  const canonical = pool.find(v=>v.toLowerCase()===val.toLowerCase());
+  if(!canonical){ flashWrap(field); return false; } // not found: flash red border
+  if(arr.some(v=>v.toLowerCase()===canonical.toLowerCase())) return true; // already added: skip silently
+  arr.push(canonical);    // add the canonically-cased value
+  renderTags(field);      // re-render all chips
+  return true;
+}
+
+// ── flashWrap: briefly flash the tag-wrap border red when an invalid value is typed ──
+function flashWrap(field){
+  const w=document.getElementById(`tw-${field}`);  // the tag-wrap container
+  w.style.borderColor='#ef4444';                    // red flash
+  setTimeout(()=>w.style.borderColor='',700);       // revert after 700ms
+}
+
+// Triggered on every keystroke inside a tag input
+function onTagInput(field){
+  const val=document.getElementById(`inp-${field}`).value;
+  if(field==='siteid'){
+    // Narrow cell datalist by typed (un-added) site text + already-added sites
+    refreshCellDatalist();
+  }
+  // If value ends with comma, treat as add-trigger
+  if(val.endsWith(',')){
+    const clean=val.slice(0,-1).trim();
+    if(addTag(field,clean)) document.getElementById(`inp-${field}`).value='';
+  }
+  // Also update sub-region datalist narrowing if sub region input changed
+  if(field==='subregion') refreshAllDataLists();
+}
+
+// Triggered when user presses a key in a tag input
+function onTagKey(e, field){
+  const inp=document.getElementById(`inp-${field}`);
+  if(e.key==='Enter'||e.key===','){
+    e.preventDefault();
+    const val=inp.value.replace(/,$/,'').trim();
+    if(addTag(field,val)) inp.value='';
+  }
+  if(e.key==='Backspace'&&inp.value===''&&(field==='siteid'?S.selectedSites:S.selectedCells).length>0){
+    const arr=field==='siteid'?S.selectedSites:S.selectedCells;
+    arr.pop(); renderTags(field);
+  }
+}
+
+// Triggered when browser autofills from datalist (fires 'change' but not always 'keydown')
+function onTagChange(field){
+  const inp=document.getElementById(`inp-${field}`);
+  const val=inp.value.trim();
+  if(!val) return;
+  // Try to add — if exact match in pool, it adds; otherwise flash
+  const pool=field==='siteid'
+    ?[...new Set(S.excelRows.map(r=>r.siteId))]
+    :[...new Set(S.excelRows.map(r=>r.cell))];
+  const canonical=pool.find(v=>v.toLowerCase()===val.toLowerCase());
+  if(canonical){ if(addTag(field,val)) inp.value=''; }
+}
+
+// Refresh site datalist narrowed by sub-region input
+function refreshAllDataLists(){
+  const reg=document.getElementById('inp-subregion').value.trim().toLowerCase();
+  let base=S.excelRows;
+  if(reg) base=base.filter(r=>r.region.toLowerCase()===reg);
+  const sites=[...new Set(base.map(r=>r.siteId))].sort();
+  document.getElementById('dl-siteid').innerHTML=sites.map(v=>`<option value="${v}">`).join('');
+  refreshCellDatalist();
+}
+
+// Refresh cell datalist narrowed by sub-region + selected/typed sites
+function refreshCellDatalist(){
+  const reg=document.getElementById('inp-subregion').value.trim().toLowerCase();
+  let base=S.excelRows;
+  if(reg) base=base.filter(r=>r.region.toLowerCase()===reg);
+  // Narrow by already-selected sites + what's currently typed
+  const typedSite=document.getElementById('inp-siteid').value.trim().toLowerCase();
+  const activeSites=[...S.selectedSites.map(s=>s.toLowerCase())];
+  if(typedSite) activeSites.push(typedSite);
+  if(activeSites.length) base=base.filter(r=>activeSites.includes(r.siteId.toLowerCase()));
+  const cells=[...new Set(base.map(r=>r.cell))].sort();
+  document.getElementById('dl-cellname').innerHTML=cells.map(v=>`<option value="${v}">`).join('');
+}
+
+// Check if exactly 1 site + 1 cell selected → auto-populate sidebar
+function checkAutoPopulate(){
+  if(S.selectedSites.length===1 && S.selectedCells.length===1){
+    const row=S.excelRows.find(r=>
+      r.siteId===S.selectedSites[0] && r.cell===S.selectedCells[0]
+    );
+    if(row) autoPopulateCell(row);
+  }
+}
+
+// Sub-region plain text input handler (stays single)
+function onFilterInput(field){
+  if(field==='subregion'){
+    const reg=document.getElementById('inp-subregion').value.trim();
+    const setHint=(id,inputId,val,pool)=>{
+      const el=document.getElementById(id),inp=document.getElementById(inputId);
+      if(!val){el.textContent='';el.className='filter-match-hint none';inp.className='filter-text-input';return;}
+      const exact=pool.some(v=>v.toLowerCase()===val.toLowerCase());
+      const partial=pool.filter(v=>v.toLowerCase().includes(val.toLowerCase())).length;
+      if(exact){el.textContent='✓ exact match';el.className='filter-match-hint ok';inp.className='filter-text-input has-match';}
+      else if(partial){el.textContent=`${partial} suggestion${partial>1?'s':''}`;el.className='filter-match-hint none';inp.className='filter-text-input';}
+      else{el.textContent='no match';el.className='filter-match-hint err';inp.className='filter-text-input no-match';}
+    };
+    setHint('hint-subregion','inp-subregion',reg,[...new Set(S.excelRows.map(r=>r.region))]);
+    refreshAllDataLists();
+  }
+}
+
+// ══════════════════════════════════════════════
+// AUTO-POPULATE (Change 6)
+// ══════════════════════════════════════════════
+// ── autoPopulateCell: fill all sidebar inputs from a matched Excel row ──
+// Called automatically when exactly 1 Site ID + 1 Cell Name tag are selected,
+// or manually via "Load into Analyzer" popup button.
+// To add more sidebar fields: add the input update here + matching state update in S.
+function autoPopulateCell(row){
+  const hIn=S.units==='metric'?row.height:(row.height/0.3048).toFixed(1);  // convert height to display units
+  document.getElementById('inp-height').value   = +hIn;         // → Antenna Height input
+  document.getElementById('inp-downtilt').value = row.tilt;     // → Downtilt input
+  document.getElementById('inp-lat').value      = row.lat.toFixed(7);  // → Site Latitude input
+  document.getElementById('inp-lon').value      = row.lon.toFixed(7);  // → Site Longitude input
+  document.getElementById('inp-az').value       = row.az;       // → Azimuth input
+  S.hRaw=+hIn; S.dtDeg=row.tilt; S.siteLat=row.lat; S.siteLon=row.lon; S.azDeg=row.az;
+  S.demD=null; S.demElev=null; S.demStatus=null; S.demMsg='';   // clear stale DEM data for old coords
+  hM=row.height; compute();  // recompute geometry with new values
+
+  // ── Build banner: show all fields including Time Advance if present ──
+  // To add more banner items: append another cell-loaded-item div below.
+  const taItem = row.timeAdvance!=null
+    ? `<div class="cell-loaded-item">Time Advance: <b>${row.timeAdvance} m</b></div>` : '';
+  document.getElementById('cell-loaded-banner').style.display='block';
+  document.getElementById('cell-loaded-grid').innerHTML=`
+    <div class="cell-loaded-item">Site ID: <b>${row.siteId}</b></div>
+    <div class="cell-loaded-item">Cell: <b>${row.cell}</b></div>
+    <div class="cell-loaded-item">Sub Region: <b>${row.region}</b></div>
+    <div class="cell-loaded-item">Azimuth: <b>${row.az}°</b></div>
+    <div class="cell-loaded-item">Height: <b>${row.height} m AGL</b></div>
+    <div class="cell-loaded-item">Tilt: <b>${row.tilt}°</b></div>
+    ${taItem}`;  // Time Advance line only rendered when column exists in Excel
+}
+
+function clearCellSelection(){
+  document.getElementById('cell-loaded-banner').style.display='none';
+}
+
+// ══════════════════════════════════════════════
+// APPLY / CLEAR FILTERS
+// ══════════════════════════════════════════════
+function applyFilters(){
+  const reg=document.getElementById('inp-subregion').value.trim();
+  // Use tag arrays for site/cell; fall back to typed value if no tags yet
+  const sites=S.selectedSites.length?S.selectedSites:[];
+  const cells=S.selectedCells.length?S.selectedCells:[];
+  S.filteredRows=S.excelRows.filter(r=>{
+    if(reg&&r.region.toLowerCase()!==reg.toLowerCase())return false;
+    if(sites.length&&!sites.some(s=>s.toLowerCase()===r.siteId.toLowerCase()))return false;
+    if(cells.length&&!cells.some(c=>c.toLowerCase()===r.cell.toLowerCase()))return false;
+    return true;
+  });
+  showResultsBar(S.filteredRows);
+  renderExcelSectors(S.filteredRows);
+  if(reg){
+    document.getElementById('subr-badge').style.display='flex';
+    document.getElementById('subr-badge-text').textContent=`Showing: ${reg} (${S.filteredRows.length} cells)`;
+    document.getElementById('show-all-sub').textContent=`Filtered to sub-region: ${reg}`;
+  }
+}
+
+function clearSubRegionFilter(){
+  document.getElementById('inp-subregion').value='';
+  document.getElementById('subr-badge').style.display='none';
+  document.getElementById('hint-subregion').textContent='';
+  document.getElementById('inp-subregion').className='filter-text-input';
+  refreshAllDataLists();
+}
+
+function clearFilters(){
+  document.getElementById('inp-subregion').value='';
+  document.getElementById('inp-subregion').className='filter-text-input';
+  document.getElementById('hint-subregion').textContent='';
+  document.getElementById('hint-subregion').className='filter-match-hint none';
+  // Clear tag arrays
+  S.selectedSites=[];S.selectedCells=[];
+  document.getElementById('inp-siteid').value='';
+  document.getElementById('inp-cellname').value='';
+  renderTags('siteid');renderTags('cellname');
+  document.getElementById('subr-badge').style.display='none';
+  document.getElementById('show-all-sub').textContent='Shows only the filtered sub-region';
+  S.filteredRows=[...S.excelRows];
+  populateDataLists();
+  document.getElementById('results-bar').style.display='none';
+  if(S.showAll)renderExcelSectors(S.excelRows);else clearExcelSectors();
+}
+
+function clearFile(){
+  S.excelRows=[];S.filteredRows=[];S.excelFile='';S.showAll=false;
+  S.selectedSites=[];S.selectedCells=[];
+  document.getElementById('chk-show-all').checked=false;
+  document.getElementById('upload-zone-wrap').style.display='block';
+  document.getElementById('file-loaded-wrap').style.display='none';
+  document.getElementById('excel-file-input').value='';
+  document.getElementById('excel-hdr-sub').textContent='Upload: Site ID, Cell Name, Latitude, Longitude, Azimuth, Sub Region, Height, Tilt';
+  document.getElementById('results-bar').style.display='none';
+  document.getElementById('cell-loaded-banner').style.display='none';
+  document.getElementById('subr-badge').style.display='none';
+  renderTags('siteid');renderTags('cellname');
+  clearExcelSectors();updateMapCaption();
+}
+
+function showResultsBar(rows){
+  document.getElementById('results-bar').style.display='block';
+  document.getElementById('results-count').textContent=rows.length;
+  const regs=[...new Set(rows.map(r=>r.region))];
+  document.getElementById('region-legend').innerHTML=regs.map(r=>`
+    <div class="region-chip"><div class="region-dot" style="background:${regionColor(r)}"></div>${r}</div>`).join('');
+}
+
+// Change 3 + 5: Show-all now shows ONLY the selected sub region
+function onShowAllToggle(){
+  S.showAll=document.getElementById('chk-show-all').checked;
+  if(S.showAll){
+    const reg=document.getElementById('inp-subregion').value.trim();
+    const toShow=reg?S.excelRows.filter(r=>r.region.toLowerCase()===reg.toLowerCase()):S.excelRows;
+    const label=reg?`${reg} (${toShow.length} cells)`:`All (${toShow.length} cells)`;
+    document.getElementById('show-all-sub').textContent=`Showing: ${label}`;
+    showResultsBar(toShow);renderExcelSectors(toShow);
+  }else{
+    if(S.selectedSites.length||S.selectedCells.length||document.getElementById('inp-subregion').value.trim())
+      renderExcelSectors(S.filteredRows.length?S.filteredRows:[]);
+    else{clearExcelSectors();document.getElementById('results-bar').style.display='none';}
+    document.getElementById('show-all-sub').textContent='Shows only the filtered sub-region';
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// SIDEBAR EVENT HANDLERS — called by HTML input elements (oninput/onchange)
+// ════════════════════════════════════════════════════════════════════════
+
+// ── setUnits: switch between Metric and USA (imperial) display ──
+// To add a new unit system: extend the ternary checks throughout fmtD() and toM().
+function setUnits(u){
+  S.units=u;
+  document.getElementById('btn-metric').classList.toggle('active',u==='metric');    // highlight active button
+  document.getElementById('btn-imperial').classList.toggle('active',u==='imperial');
+  document.getElementById('lbl-height').textContent=u==='metric'?'Antenna Height (m)':'Antenna Height (ft)';
+  document.getElementById('lbl-dist').textContent  =u==='metric'?'Profile Distance (m)':'Profile Distance (ft)';
+  onParamChange();  // recompute with updated unit conversion
+}
+
+// ── onTerrainToggle: enable/disable DEM elevation fetching ──
+function onTerrainToggle(){
+  S.terrainOn=document.getElementById('chk-terrain').checked;
+  document.getElementById('terrain-section').style.display=S.terrainOn?'block':'none';
+  if(!S.terrainOn){S.demD=null;S.demElev=null;S.demStatus=null;}  // clear DEM when disabled
+  compute();
+}
+
+// ── onParamChange: read all sidebar inputs → update state → recompute ──
+// Called by every oninput on sidebar number inputs.
+// To add a new sidebar input: add its read here + a new state key in S.
+function onParamChange(){
+  S.hRaw   =+document.getElementById('inp-height').value  ||30;   // antenna height (raw units)
+  S.dtDeg  =+document.getElementById('inp-downtilt').value||6;    // downtilt (degrees)
+  S.vbw    =+document.getElementById('inp-vbw').value     ||6;    // vertical beamwidth (degrees)
+  S.hbw    =+document.getElementById('inp-hbw').value     ||65;   // horizontal beamwidth (degrees)
+  S.dRaw   =+document.getElementById('inp-dist').value    ||1000; // profile distance (raw units)
+  S.siteLat=+document.getElementById('inp-lat').value     ||30;   // site latitude
+  S.siteLon=+document.getElementById('inp-lon').value     ||31;   // site longitude
+  S.azDeg  =+document.getElementById('inp-az').value      ||0;    // azimuth bearing
+  hM=toM(S.hRaw); distM=toM(S.dRaw);  // convert to metres immediately
+  document.getElementById('conv-dist').textContent=`→ ${fmtD(distM)}`;  // show converted value
+  compute();
+}
+
+// ── onSliderChange: update slider position and redraw terrain chart only ──
+// Does NOT trigger full recompute — just moves the selected-distance marker.
+function onSliderChange(){
+  S.sliderD=+document.getElementById('slider-dist').value;
+  document.getElementById('slider-val-lbl').textContent=fmtD(S.sliderD);
+  updateSliderInfo();   // update the three info boxes below the slider
+  drawTerrainChart();   // redraw only the terrain chart (cheaper than full recompute)
+}
+
+// ── fetchElevationProfile: triggered by "Fetch Elevation Profile" button ──
+async function fetchElevationProfile(){
+  const btn=document.getElementById('btn-fetch');
+  btn.disabled=true;   // prevent double-click
+  showSpinner('Fetching elevation via Open-Topo-Data SRTM 30m…');
+  try{
+    const{d,elev,source}=await fetchDem(S.siteLat,S.siteLon,S.azDeg,distM,100);
+    S.demD=d; S.demElev=elev; S.demStatus='ok'; S.demSource=source;
+    S.demMsg=`Loaded ${d.length} samples · ${source}`;
+    compute();  // recompute geometry with new DEM
+  }catch(e){
+    S.demStatus='error'; S.demMsg=`Fetch failed: ${e.message}`;
+    S.demD=null; S.demElev=null;
+    updateStatusBar();  // show error message without full recompute
+  }
+  hideSpinner();
+  btn.disabled=false;
+}
+function resetAll(){
+  S.demD=null;S.demElev=null;S.demStatus=null;S.demMsg='';S.demSource='';
+  ['inp-height','inp-downtilt','inp-vbw','inp-hbw','inp-dist','inp-lat','inp-lon','inp-az']
+    .forEach((id,i)=>document.getElementById(id).value=[30,6,6,65,1000,30.0028686,31.0719953,80][i]);
+  document.getElementById('chk-terrain').checked=true;S.terrainOn=true;
+  document.getElementById('terrain-section').style.display='block';
+  clearFile();onParamChange();
+}
+
+// ════════════════════════════════════════════
+// COMPUTE
+// ════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════
+// COMPUTE — recalculate all geometry whenever any input changes
+// Call this whenever S.hRaw / S.dtDeg / S.vbw / S.siteLat etc. change.
+// ════════════════════════════════════════════════════════════════════════
+function compute(){
+  hM=toM(S.hRaw);      // convert raw height to metres
+  distM=toM(S.dRaw);   // convert raw distance to metres
+  const hasDem=S.demD&&S.demElev&&S.demD.length>1&&S.terrainOn;  // true when DEM data is ready
+  const flat=flatGeom(hM,S.dtDeg,S.vbw);  // always compute flat-earth as fallback
+
+  if(hasDem){
+    // ── Terrain mode: intersect each lobe ray with real DEM profile ──
+    const se=S.demElev[0];  // site ground elevation = first DEM sample (MSL metres)
+    S.mainD=rayHit(hM,se,S.dtDeg,            S.demD,S.demElev)||flat.mainD;  // main lobe hit
+    S.nearD=rayHit(hM,se,S.dtDeg+S.vbw/2,   S.demD,S.demElev)||flat.nearD;  // near lobe hit
+    S.farD =rayHit(hM,se,Math.max(0.05,S.dtDeg-S.vbw/2),S.demD,S.demElev)||flat.farD;  // far lobe hit
+
+    // ── Terrain stats: count samples where main-lobe ray clears terrain ──
+    const dtR=S.dtDeg*Math.PI/180;  // downtilt in radians for stats calculation
+    let ab=0,fo=null;
+    S.demD.forEach((d,i)=>{
+      const rz=se+hM-d*Math.tan(dtR);  // ray height above MSL at this sample distance
+      if(rz>=S.demElev[i]) ab++;        // ray clears terrain at this point
+      else if(fo===null) fo=d;           // record first obstruction distance
+    });
+    S.avgSig=Math.round(ab/S.demD.length*100);  // signal coverage %
+    S.shadowPct=100-S.avgSig;                    // shadow %
+    S.firstObs=fo;                               // first obstruction distance (m) or null
+  }else{
+    // ── Flat-earth mode: use pure geometry ──
+    S.mainD=flat.mainD; S.nearD=flat.nearD; S.farD=flat.farD;
+  }
+
+  // ── Clamp slider to valid range after distance may have changed ──
+  const sl=document.getElementById('slider-dist');
+  sl.max=distM;
+  if(S.sliderD>distM) S.sliderD=distM*.25;  // reset to 25% if slider was beyond new max
+  sl.value=S.sliderD;
+
+  updateAll();  // refresh all UI panels
+}
+
+// ════════════════════════════════════════════
+// UI
+// ════════════════════════════════════════════
+// ── updateAll: refresh every UI panel after any state change ──
+// To add a new panel: add its draw/update function call here.
+// drawLobeChart() was removed (Feature 1) — re-add here if you restore the lobe chart.
+function updateAll(){
+  updateStatusBar();  // top status bar (DEM loaded / flat / error)
+  updateMetrics();    // main lobe + footprint metric cards
+  updateAssume();     // assumption note (VBW / HBW / units)
+  updateTStats();     // terrain stats row (signal%, shadow%, 1st obstruction)
+  updateSliderInfo(); // slider position info row
+  drawTerrainChart(); // Plotly terrain profile + lobe rays chart
+  drawSingleSector(); // Leaflet map — single active sector
+  updateMapMeta();    // site coordinates footer line
+  updateMapCaption(); // map section caption
+}
+function updateStatusBar(){
+  const bar=document.getElementById('status-bar');
+  const hasDem=S.demD&&S.demElev&&S.demD.length>1&&S.terrainOn;
+  if(S.demStatus==='ok'&&hasDem){
+    const obs=S.firstObs?fmtD(S.firstObs):'None';
+    bar.className='status-bar status-ok';
+    bar.innerHTML=`✓ ${S.demMsg} · Signal ${S.avgSig}% · Shadow ${S.shadowPct}% · 1st obstruction: ${obs} · <span class="src-badge src-local">${S.demSource}</span>`;
+  }else if(S.demStatus==='error'){bar.className='status-bar status-err';bar.textContent=`✕ ${S.demMsg}`;}
+  else{bar.className='status-bar status-idle';bar.textContent=`Flat model · h=${fmtD(hM)} AGL · Main lobe=${fmtD(S.mainD)}`;}
+}
+function updateMetrics(){
+  const g=S.demStatus==='ok'&&S.terrainOn?'Terrain-adjusted':'Flat-earth';
+  document.getElementById('metric-main').textContent=fmtD(S.mainD);
+  document.getElementById('metric-main-sub').textContent=`Ground intersection of central lobe (${g})`;
+  document.getElementById('metric-footprint').textContent=`${fmtD(S.nearD)} → ${fmtD(S.farD)}`;
+  document.getElementById('metric-foot-sub').textContent=`${g} · VBW ${S.vbw.toFixed(1)}° · Width: ${fmtD(S.farD-S.nearD)}`;
+  document.getElementById('sm-main').textContent=fmtD(S.mainD);
+  document.getElementById('sm-foot').textContent=`${fmtD(S.nearD)} – ${fmtD(S.farD)}`;
+}
+function updateAssume(){
+  document.getElementById('a-vbw').textContent=`${S.vbw.toFixed(1)}°`;
+  document.getElementById('a-hbw').textContent=`${S.hbw}°`;
+  document.getElementById('a-units').textContent=S.units==='metric'?'Metric':'USA (ft/mi)';
+}
+function updateTStats(){
+  const hasDem=S.demD&&S.demElev&&S.demD.length>1&&S.terrainOn;
+  const sec=document.getElementById('tstat-section');
+  if(!hasDem){sec.style.display='none';return;}
+  sec.style.display='block';
+  const obs=S.firstObs?fmtD(S.firstObs):'None';
+  document.getElementById('tstat-row').innerHTML=`
+    <div class="tstat"><div class="tstat-val">${S.avgSig}%</div><div class="tstat-lbl">Signal</div></div>
+    <div class="tstat"><div class="tstat-val">${S.shadowPct}%</div><div class="tstat-lbl">Shadow</div></div>
+    <div class="tstat"><div class="tstat-val">${obs}</div><div class="tstat-lbl">1st Obstruction</div></div>`;
+}
+function updateSliderInfo(){
+  const hasDem=S.demD&&S.demElev&&S.demD.length>1&&S.terrainOn;
+  const slE=hasDem?interp(S.sliderD,S.demD,S.demElev):0;
+  const inFP=S.sliderD>=S.nearD&&S.sliderD<=S.farD;
+  document.getElementById('slider-val-lbl').textContent=fmtD(S.sliderD);
+  document.getElementById('sl-pos').textContent=fmtD(S.sliderD);
+  document.getElementById('sl-elev').textContent=hasDem?`${slE.toFixed(1)} m MSL`:'—';
+  document.getElementById('sl-fp').textContent=inFP?'✓ Inside':'✗ Outside';
+  const pct=S.sliderD/distM*100;
+  document.getElementById('slider-dist').style.background=`linear-gradient(to right,var(--accent) ${pct}%,var(--border) ${pct}%)`;
+}
+function updateMapMeta(){
+  document.getElementById('map-meta').textContent=`Site ${S.siteLat.toFixed(6)}, ${S.siteLon.toFixed(6)} · Az ${S.azDeg.toFixed(0)}° · H-BW ${S.hbw}° · Radius ${fmtD(S.farD)}`;
+}
+function updateMapCaption(){
+  const n=S.excelRows.length;
+  document.getElementById('map-caption').textContent=n?`Single-cell sector + ${n} Excel cells available (${[...new Set(S.excelRows.map(r=>r.region))].length} sub-regions)`:'Single-cell sector. Load an Excel file to visualize bulk sectors.';
+}
+
+// ════════════════════════════════════════════
+// TERRAIN PROFILE CHART
+// ════════════════════════════════════════════
+function drawTerrainChart(){
+  const hasDem=S.demD&&S.demElev&&S.demD.length>1&&S.terrainOn;
+  const N=400,xs=Array.from(ls(0,distM,N));
+  const se=hasDem?S.demElev[0]:0;
+  const tY=hasDem?xs.map(x=>interp(x,S.demD,S.demElev)):xs.map(()=>se);
+  const yMin=Math.min(...tY)-20,yMax=se+hM+50;
+  const fa=Math.max(0.05,S.dtDeg-S.vbw/2);
+  const rF=clipRay(xs,tY,se,hM,fa),rM=clipRay(xs,tY,se,hM,S.dtDeg),rN=clipRay(xs,tY,se,hM,S.dtDeg+S.vbw/2);
+  const fHX=rF.x[rF.x.length-1],mHX=rM.x[rM.x.length-1],nHX=rN.x[rN.x.length-1];
+  const eA=d=>hasDem?interp(d,S.demD,S.demElev):se;
+  let sI=xs.findIndex(x=>x>=mHX);if(sI<0)sI=N-1;sI=Math.max(1,Math.min(sI,N-1));
+  const pL=lowerPoly(rN,xs,tY);
+  const pF=lobePoly(fHX>=mHX?rF:rM,fHX>=mHX?rM:rF,xs,tY);
+  const pM=lobePoly(mHX>=nHX?rM:rN,mHX>=nHX?rN:rM,xs,tY);
+  const CU='#3b82f6',CM='#f87171',CL='#fde047';
+  const traces=[
+    {x:xs.slice(0,sI+1),y:tY.slice(0,sI+1),fill:'tozeroy',fillcolor:'rgba(125,211,252,0.28)',line:{color:'#7dd3fc',width:1.5},name:'Terrain',hovertemplate:'Dist:%{x:.0f}m<br>Elev:%{y:.1f}m<extra></extra>'},
+    {x:xs.slice(sI),y:tY.slice(sI),fill:'tozeroy',fillcolor:'rgba(10,5,5,0.70)',line:{color:'#ef4444',width:1.5},showlegend:false,name:'_sh',hovertemplate:'Shadow:%{y:.1f}m<extra></extra>'},
+    {x:pL.x,y:pL.y,fill:'toself',fillcolor:'rgba(253,224,71,0.28)',line:{color:'rgba(0,0,0,0)',width:0},showlegend:false,name:'_lf',hoverinfo:'skip'},
+    {x:pM.x,y:pM.y,fill:'toself',fillcolor:'rgba(248,113,113,0.28)',line:{color:'rgba(0,0,0,0)',width:0},showlegend:false,name:'_mf',hoverinfo:'skip'},
+    {x:pF.x,y:pF.y,fill:'toself',fillcolor:'rgba(59,130,246,0.28)',line:{color:'rgba(0,0,0,0)',width:0},showlegend:false,name:'_uf',hoverinfo:'skip'},
+    {x:rF.x,y:rF.y,line:{color:CU,width:2},name:`Upper (${fmtD(fHX)})`,hovertemplate:'Upper:%{y:.1f}m<extra></extra>'},
+    {x:rM.x,y:rM.y,line:{color:CM,width:2},name:`Main (${fmtD(mHX)})`,hovertemplate:'Main:%{y:.1f}m<extra></extra>'},
+    {x:rN.x,y:rN.y,line:{color:CL,width:2},name:`Lower (${fmtD(nHX)})`,hovertemplate:'Lower:%{y:.1f}m<extra></extra>'},
+    ...[rF,rM,rN].map((r,i)=>{const hx=r.x[r.x.length-1];return{x:[hx],y:[eA(hx)],mode:'markers',marker:{size:9,color:[CU,CM,CL][i],symbol:'x',line:{color:'white',width:1.5}},showlegend:false,name:'_hit',hovertemplate:`Hit:${fmtD(hx)}<extra></extra>`};}),
+    {x:[S.sliderD,S.sliderD],y:[yMin,yMax],line:{color:'#dc2626',width:1.8,dash:'dot'},name:'Selected',hovertemplate:`Pos:${fmtD(S.sliderD)}<extra></extra>`},
+    {x:[0,0],y:[se,se+hM],line:{color:'#ef4444',width:3},showlegend:false,name:'_ant',hoverinfo:'skip'},
+    {x:[0],y:[se+hM],mode:'markers+text',marker:{size:10,color:'#ef4444',symbol:'diamond',line:{color:'white',width:2}},text:[`Ant ${hM.toFixed(0)}m`],textposition:'top right',textfont:{size:10,color:'#ef4444'},showlegend:false,name:'Antenna',hovertemplate:`AGL:${hM.toFixed(0)}m<extra></extra>`},
+  ];
+  Plotly.react('chart-terrain',traces,{
+    plot_bgcolor:'#0f172a',paper_bgcolor:'#1e293b',font:{family:'Syne',color:'#94a3b8',size:11},
+    margin:{l:55,r:18,t:50,b:92},height:380,
+    legend:{orientation:'h',yanchor:'top',y:-0.23,xanchor:'left',x:0,font:{size:10,color:'#cbd5e1'},bgcolor:'rgba(0,0,0,0)',borderwidth:0},
+    xaxis:{title:{text:'Distance (m)',font:{size:11,color:'#64748b'}},gridcolor:'rgba(255,255,255,0.05)',tickfont:{size:10,color:'#64748b'},range:[0,distM],linecolor:'#334155'},
+    yaxis:{title:{text:'Elevation (m MSL)',font:{size:11,color:'#64748b'}},gridcolor:'rgba(255,255,255,0.05)',tickfont:{size:10,color:'#64748b'},range:[yMin,yMax],linecolor:'#334155'},
+    hovermode:'x unified',hoverlabel:{bgcolor:'#1e293b',bordercolor:'#334155',font:{family:'JetBrains Mono',size:11,color:'#e2e8f0'}},
+    annotations:[{x:.5,y:1.04,xref:'paper',yref:'paper',showarrow:false,text:`Profile · Az:${S.azDeg.toFixed(0)}° · Tilt:${S.dtDeg.toFixed(1)}° · VBW:${S.vbw.toFixed(1)}°`,font:{size:11,color:'#cbd5e1'},xanchor:'center'}],
+  },{displayModeBar:true,displaylogo:false,responsive:true});
+}
+
+// ════════════════════════════════════════════
+// LOBE CHART
+// ════════════════════════════════════════════
+function drawLobeChart(){
+  const hasDem=S.demD&&S.demElev&&S.demD.length>1&&S.terrainOn;
+  const fa=Math.max(0.05,S.dtDeg-S.vbw/2),flat=flatGeom(hM,S.dtDeg,S.vbw);
+  const CU='#3b82f6',CM='#f87171',CL='#fde047';
+  let traces=[],title,yLbl,xMax,yMin,yMax;
+  if(hasDem){
+    document.getElementById('lobe-caption').textContent='Terrain-adjusted';
+    const se=S.demElev[0],N=400,xs=Array.from(ls(0,S.demD[S.demD.length-1],N));
+    const tAbs=xs.map(x=>interp(x,S.demD,S.demElev)),tRel=tAbs.map(e=>e-se);
+    const rF=clipRay(xs,tRel,0,hM,fa),rM=clipRay(xs,tRel,0,hM,S.dtDeg),rN=clipRay(xs,tRel,0,hM,S.dtDeg+S.vbw/2);
+    const fH=rF.x[rF.x.length-1],mH=rM.x[rM.x.length-1],nH=rN.x[rN.x.length-1];
+    xMax=S.demD[S.demD.length-1];yMin=Math.min(...tRel)-10;yMax=hM+30;
+    let sI=xs.findIndex(x=>x>=mH);if(sI<0)sI=N-1;sI=Math.max(1,Math.min(sI,N-1));
+    const pL=lowerPoly(rN,xs,tRel),pF=lobePoly(fH>=mH?rF:rM,fH>=mH?rM:rF,xs,tRel),pM=lobePoly(mH>=nH?rM:rN,mH>=nH?rN:rM,xs,tRel);
+    traces=[
+      {x:xs.slice(0,sI+1),y:tRel.slice(0,sI+1),fill:'tozeroy',fillcolor:'rgba(125,211,252,0.25)',line:{color:'#7dd3fc',width:1.5},name:'Terrain'},
+      {x:xs.slice(sI),y:tRel.slice(sI),fill:'tozeroy',fillcolor:'rgba(10,5,5,0.72)',line:{color:'#ef4444',width:1.5},showlegend:false,name:'_s'},
+      {x:pL.x,y:pL.y,fill:'toself',fillcolor:'rgba(253,224,71,0.28)',line:{color:'rgba(0,0,0,0)',width:0},showlegend:false,name:'_lf',hoverinfo:'skip'},
+      {x:pM.x,y:pM.y,fill:'toself',fillcolor:'rgba(248,113,113,0.28)',line:{color:'rgba(0,0,0,0)',width:0},showlegend:false,name:'_mf',hoverinfo:'skip'},
+      {x:pF.x,y:pF.y,fill:'toself',fillcolor:'rgba(59,130,246,0.28)',line:{color:'rgba(0,0,0,0)',width:0},showlegend:false,name:'_uf',hoverinfo:'skip'},
+      {x:rF.x,y:rF.y,line:{color:CU,width:2},name:`Upper (${fmtD(fH)})`},
+      {x:rM.x,y:rM.y,line:{color:CM,width:2},name:`Main (${fmtD(mH)})`},
+      {x:rN.x,y:rN.y,line:{color:CL,width:2},name:`Lower (${fmtD(nH)})`},
+      ...[rF,rM,rN].map((r,i)=>({x:[r.x[r.x.length-1]],y:[interp(r.x[r.x.length-1],xs,tRel)],mode:'markers',marker:{size:10,color:'white',symbol:'x',line:{color:[CU,CM,CL][i],width:2}},showlegend:false,name:'_hit',hoverinfo:'skip'})),
+      {x:[0,0],y:[0,hM],line:{color:'#ef4444',width:3},showlegend:false,hoverinfo:'skip'},
+      {x:[0],y:[hM],mode:'markers+text',marker:{size:10,color:'#ef4444',symbol:'diamond',line:{color:'white',width:2}},text:[` ${hM.toFixed(0)}m`],textposition:'middle right',textfont:{size:10,color:'#ef4444'},name:'Antenna',hoverinfo:'skip'},
+    ];
+    title='Terrain-adjusted Lobe Projection';yLbl='Height (m rel. site)';
+  }else{
+    document.getElementById('lobe-caption').textContent='Flat-earth model';
+    xMax=flat.farD*1.08;yMin=-2;yMax=hM*1.18;
+    const feY=(xs,a)=>xs.map(x=>hM-x*Math.tan(a*Math.PI/180));
+    traces=[
+      {x:[0,flat.farD*1.08],y:[0,0],fill:'tozeroy',fillcolor:'rgba(125,211,252,0.18)',line:{color:'#7dd3fc',width:1.2},showlegend:false,hoverinfo:'skip'},
+      {x:[0,flat.farD,flat.mainD,0],y:[hM,0,0,hM],fill:'toself',fillcolor:'rgba(59,130,246,0.45)',line:{color:'rgba(59,130,246,.85)',width:1.5},name:'Upper Lobe',hoverinfo:'skip'},
+      {x:[0,flat.mainD,flat.nearD,0],y:[hM,0,0,hM],fill:'toself',fillcolor:'rgba(248,113,113,0.45)',line:{color:'rgba(248,113,113,.85)',width:1.5},name:'Main Lobe',hoverinfo:'skip'},
+      {x:[0,flat.nearD,0,0],y:[hM,0,0,hM],fill:'toself',fillcolor:'rgba(253,224,71,0.45)',line:{color:'rgba(253,224,71,.85)',width:1.5},name:'Lower Lobe',hoverinfo:'skip'},
+      ...[flat.farD,flat.mainD,flat.nearD].map((d,i)=>({x:[d],y:[0],mode:'markers',marker:{size:9,color:[CU,CM,CL][i],symbol:'circle',line:{color:'white',width:1.5}},showlegend:false,hovertemplate:`${fmtD(d)}<extra></extra>`})),
+      {x:[0,0],y:[0,hM],line:{color:'#ef4444',width:3},showlegend:false,hoverinfo:'skip'},
+      {x:[0],y:[hM],mode:'markers+text',marker:{size:10,color:'#ef4444',symbol:'diamond',line:{color:'white',width:2}},text:[` ${hM.toFixed(0)}m`],textposition:'middle right',textfont:{size:10,color:'#ef4444'},name:'Antenna',hoverinfo:'skip'},
+    ];
+    title='Lobe Projection (Flat-Earth)';yLbl='Antenna Height (m)';
+  }
+  Plotly.react('chart-lobe',traces,{
+    plot_bgcolor:'#0f172a',paper_bgcolor:'#1e293b',font:{family:'Syne',color:'#94a3b8',size:11},
+    margin:{l:55,r:18,t:62,b:50},height:350,
+    legend:{orientation:'v',yanchor:'top',y:.97,xanchor:'right',x:.98,font:{size:10,color:'#cbd5e1'},bgcolor:'rgba(15,23,42,0.65)',bordercolor:'#334155',borderwidth:1},
+    xaxis:{title:{text:'Distance (m)',font:{size:11,color:'#64748b'}},gridcolor:'rgba(255,255,255,0.05)',tickfont:{size:10,color:'#64748b'},range:[0,xMax],linecolor:'#334155'},
+    yaxis:{title:{text:yLbl,font:{size:11,color:'#64748b'}},gridcolor:'rgba(255,255,255,0.05)',tickfont:{size:10,color:'#64748b'},range:[yMin,yMax],linecolor:'#334155'},
+    hovermode:'x unified',hoverlabel:{bgcolor:'#1e293b',bordercolor:'#334155',font:{family:'JetBrains Mono',size:11,color:'#e2e8f0'}},
+    annotations:[{x:.5,y:1.06,xref:'paper',yref:'paper',showarrow:false,text:title,font:{size:12,color:'#e2e8f0',family:'Syne'},xanchor:'center'}],
+  },{displayModeBar:true,displaylogo:false,responsive:true});
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// LEAFLET MAP — satellite basemap with single-cell sector + bulk sectors
+// sLayers = layers for the current single active cell (cleared on each update)
+// xLayers = layers for bulk Excel sectors (cleared on clearExcelSectors)
+// ════════════════════════════════════════════════════════════════════════
+let MAP=null, sLayers=[], xLayers=[];
+
+// ── initMap: create the Leaflet map instance once on page load ──
+// To change basemap: replace the tileLayer URL with any XYZ tile provider.
+function initMap(){
+  MAP=L.map('map',{zoomControl:true}).setView([S.siteLat,S.siteLon],12);
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {attribution:'Esri World Imagery', maxZoom:19}  // Esri satellite imagery — free, no key
+  ).addTo(MAP);
+  MAP.on('click',onMapClick);  // wire click handler for coordinate display
+}
+
+// ── drawSingleSector: redraw the single active-cell sector on the map ──
+// Called from updateAll() whenever any input changes.
+// To change single-cell sector colors: edit the color values below.
+function drawSingleSector(){
+  if(!MAP){initMap();}
+  sLayers.forEach(l=>l.remove()); sLayers=[];  // clear previous single-cell layers
+  const lat=S.siteLat, lon=S.siteLon, az=S.azDeg, hbw=S.hbw;
+  const mainD=S.mainD, nearD=S.nearD, farD=S.farD;
+  const half=hbw/2, n=72, outer=[], inner=[];  // 72 arc segments = 5° per step
+  for(let i=0;i<=n;i++) outer.push(gcDest(lat,lon,az-half+i*hbw/n,farD));   // far-edge arc
+  for(let i=n;i>=0;i--) inner.push(gcDest(lat,lon,az-half+i*hbw/n,nearD));  // near-edge arc (reversed)
+  const prof=Array.from({length:60},(_,i)=>gcDest(lat,lon,az,i/59*distM));  // elevation profile path
+  const mEnd=gcDest(lat,lon,az,mainD);  // main lobe ground hit point
+  sLayers.push(L.polygon([[lat,lon],...outer,[lat,lon]],
+    {color:'#0ea5e9',weight:1.5,fillColor:'#0ea5e9',fillOpacity:0.06}).addTo(MAP));  // sector outline (light blue)
+  sLayers.push(L.polygon([...outer,...inner],
+    {color:'#4ade80',weight:2,fillColor:'#4ade80',fillOpacity:0.20}).addTo(MAP));    // footprint ring (green)
+  sLayers.push(L.polyline(prof,
+    {color:'#f97316',weight:2.2,opacity:0.8,dashArray:'7 5'}).addTo(MAP));           // DEM profile path (orange dashed)
+  sLayers.push(L.polyline([[lat,lon],mEnd],
+    {color:'#16a34a',weight:1.5,opacity:0.7}).addTo(MAP));                           // main lobe direction line (green)
+  sLayers.push(L.circleMarker([lat,lon],
+    {radius:9,color:'#0ea5e9',fillColor:'#0ea5e9',fillOpacity:1,weight:2})
+    .bindPopup(`<b>Antenna Site</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}<br>Az: ${az}°`)
+    .addTo(MAP));  // site marker (cyan dot)
+  sLayers.push(L.circleMarker(mEnd,
+    {radius:8,color:'#0d9488',fillColor:'#0d9488',fillOpacity:1,weight:2})
+    .bindPopup(`<b>Main Lobe Hit</b><br>${fmtD(mainD)}`)
+    .addTo(MAP));  // main lobe hit marker (teal dot)
+  MAP.setView([lat,lon],12);  // pan to site on each update
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// SECTOR DISPLAY CONSTANTS
+// These control the visual size of bulk-sector polygons on the map.
+// The real beam distances are preserved in popup info; only the map shape
+// is scaled down so dense sites don't obscure each other.
+// ════════════════════════════════════════════════════════════════════════
+
+// ── DISPLAY_R: outer arc radius in metres for all bulk sectors on the map ──
+// Increase for larger sectors (more visible at low zoom), decrease if still overlapping.
+const DISPLAY_R = 220;
+
+// ── DISPLAY_R_INNER: inner arc radius — creates the footprint ring inside the sector ──
+const DISPLAY_R_INNER = 80;
+
+function renderExcelSectors(rows){
+  clearExcelSectors();
+  if(!rows||!rows.length)return;
+
+  // Fixed blue palette — outline slightly darker, fill very faint
+  const SECTOR_COLOR   = '#2563eb';   // blue-600 outline
+  const SECTOR_FILL    = '#3b82f6';   // blue-500 fill
+  const DOT_COLOR      = '#1d4ed8';   // blue-700 site dot
+
+  rows.forEach(cell=>{
+    const flat=flatGeom(cell.height,cell.tilt,cell.vbw);  // keep for popup info only
+    const half=cell.hbw/2, n=20;                           // 20 segments = smooth arc
+    const outer=[], inner=[];
+
+    // Use FIXED small display radius — direction correct, size compact
+    for(let i=0;i<=n;i++) outer.push(gcDest(cell.lat,cell.lon, cell.az-half+i*cell.hbw/n, DISPLAY_R));
+    for(let i=n;i>=0;i--) inner.push(gcDest(cell.lat,cell.lon, cell.az-half+i*cell.hbw/n, DISPLAY_R_INNER));
+
+    // ── Popup HTML — to add more fields: copy a cell-popup-row block and use cell.yourField ──
+    const taRow = cell.timeAdvance!=null
+      ? `<div class="cell-popup-row"><span class="cell-popup-key">Time Advance</span><span class="cell-popup-val">${cell.timeAdvance} m</span></div>`
+      : '';  // only show TA row if value was present in Excel
+    const popup=`<div class="cell-popup">
+      <div class="cell-popup-title">📡 ${cell.cell}</div>
+      <div class="cell-popup-row"><span class="cell-popup-key">Site ID</span><span class="cell-popup-val">${cell.siteId}</span></div>
+      <div class="cell-popup-row"><span class="cell-popup-key">Sub Region</span><span class="cell-popup-val">${cell.region}</span></div>
+      <div class="cell-popup-row"><span class="cell-popup-key">Azimuth</span><span class="cell-popup-val">${cell.az}°</span></div>
+      <div class="cell-popup-row"><span class="cell-popup-key">Height</span><span class="cell-popup-val">${cell.height} m</span></div>
+      <div class="cell-popup-row"><span class="cell-popup-key">Tilt</span><span class="cell-popup-val">${cell.tilt}°</span></div>
+      ${taRow}
+      <div class="cell-popup-row"><span class="cell-popup-key">Main Lobe (calc)</span><span class="cell-popup-val">${Math.round(flat.mainD)} m</span></div>
+      <div class="cell-popup-row"><span class="cell-popup-key">Footprint (calc)</span><span class="cell-popup-val">${Math.round(flat.nearD)}–${Math.round(flat.farD)} m</span></div>
+      <button class="cell-popup-btn" onclick="loadCellByIds('${cell.siteId.replace(/'/g,"\\'")}','${cell.cell.replace(/'/g,"\\'")}')">📥 Load into Analyzer</button>
+    </div>`;
+
+    // Sector wedge — very thin outline, near-transparent fill so sites don't bleed together
+    xLayers.push(L.polygon(
+      [[cell.lat,cell.lon],...outer,[cell.lat,cell.lon]],
+      {color:SECTOR_COLOR, weight:1, fillColor:SECTOR_FILL, fillOpacity:0.08, interactive:false}
+    ).addTo(MAP));
+
+    // Footprint arc ring — thin dashed, no fill
+    xLayers.push(L.polygon(
+      [...outer,...inner],
+      {color:SECTOR_COLOR, weight:1, fillColor:SECTOR_FILL, fillOpacity:0.13, dashArray:'3 3', interactive:false}
+    ).addTo(MAP));
+
+    // Tiny site dot — 4 px radius, clickable for popup
+    xLayers.push(L.circleMarker(
+      [cell.lat,cell.lon],
+      {radius:4, color:DOT_COLOR, fillColor:DOT_COLOR, fillOpacity:1, weight:1.2}
+    ).bindPopup(popup,{maxWidth:230}).addTo(MAP));
+  });
+
+  if(rows.length){
+    const lats=rows.map(r=>r.lat), lons=rows.map(r=>r.lon);
+    MAP.fitBounds(
+      [[Math.min(...lats)-0.03, Math.min(...lons)-0.03],
+       [Math.max(...lats)+0.03, Math.max(...lons)+0.03]],
+      {padding:[24,24]}
+    );
+  }
+}
+
+function clearExcelSectors(){xLayers.forEach(l=>l.remove());xLayers=[];}
+
+// Change 6: Load cell by Site ID + Cell Name (sets tag chips + auto-populates sidebar)
+function loadCellByIds(siteId, cellName){
+  const row=S.excelRows.find(r=>r.siteId===siteId&&r.cell===cellName);
+  if(!row){alert('Cell not found.');return;}
+  // Clear existing tags and set exactly this site + cell
+  S.selectedSites=[siteId];
+  S.selectedCells=[cellName];
+  renderTags('siteid');
+  renderTags('cellname');
+  // Also set sub-region hint
+  document.getElementById('inp-subregion').value=row.region;
+  document.getElementById('inp-subregion').className='filter-text-input has-match';
+  document.getElementById('hint-subregion').textContent='✓ exact match';
+  document.getElementById('hint-subregion').className='filter-match-hint ok';
+  autoPopulateCell(row);
+  MAP.closePopup();
+}
+
+// Legacy loadCell kept for any remaining references
+function loadCell(lat,lon,az,h,tilt){
+  document.getElementById('inp-lat').value=lat.toFixed(7);
+  document.getElementById('inp-lon').value=lon.toFixed(7);
+  document.getElementById('inp-az').value=az;
+  const hIn=S.units==='metric'?h:(h/0.3048).toFixed(1);
+  document.getElementById('inp-height').value=hIn;
+  document.getElementById('inp-downtilt').value=tilt;
+  S.siteLat=lat;S.siteLon=lon;S.azDeg=az;S.hRaw=+hIn;S.dtDeg=tilt;
+  S.demD=null;S.demElev=null;S.demStatus=null;S.demMsg='';
+  hM=h;compute();MAP.closePopup();
+}
+
+function onMapClick(e){
+  const{lat,lng}=e.latlng,R=6371000;
+  const dLa=(lat-S.siteLat)*Math.PI/180,dLo=(lng-S.siteLon)*Math.PI/180;
+  const a=Math.sin(dLa/2)**2+Math.cos(S.siteLat*Math.PI/180)*Math.cos(lat*Math.PI/180)*Math.sin(dLo/2)**2;
+  const dist=R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+  document.getElementById('click-card').innerHTML=`
+    <div class="click-card">
+      <div class="click-icon">📍</div>
+      <div class="click-body">
+        <div class="click-title">Selected Point</div>
+        <div class="click-fields">
+          <div class="click-field"><span>Latitude</span>${lat.toFixed(6)}°</div>
+          <div class="click-field"><span>Longitude</span>${lng.toFixed(6)}°</div>
+          <div class="click-field"><span>Distance from Site</span>${fmtD(dist)}</div>
+        </div>
+        <div class="click-hint">Click anywhere on the map to update</div>
+      </div>
+    </div>`;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// KMZ EXPORT — builds a zipped KML with sector + footprint polygons
+// The exported file opens in Google Earth / any GIS tool.
+// To add more placemarks: duplicate a <Placemark> block inside kmlContent.
+// ════════════════════════════════════════════════════════════════════════
+function exportKmz(){
+  const lat=S.siteLat,lon=S.siteLon,az=S.azDeg,hbw=S.hbw;
+  const mainD=S.mainD,nearD=S.nearD,farD=S.farD;
+  const half=hbw/2, n=60;  // 60 arc segments gives a smooth polygon in Google Earth
+  // ── cS: helper to produce a KML coordinate string "lon,lat,0" for a destination ──
+  // Note: KML uses lon,lat order (reversed from standard lat,lon)
+  const cS=(b,d)=>{const[la,lo]=gcDest(lat,lon,b,d);return`${lo},${la},0`;};
+  // ── Build coordinate strings for outer (far edge) and inner (near edge) arcs ──
+  const outer=Array.from({length:n+1},(_,i)=>cS(az-half+i*hbw/n,farD)).join(' ');
+  const inner=Array.from({length:n+1},(_,i)=>cS(az-half+(n-i)*hbw/n,nearD)).join(' ');
+  const kml=`<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+  <Style id="s"><LineStyle><color>ffe9a50e</color><width>2</width></LineStyle><PolyStyle><color>1ae9a50e</color></PolyStyle></Style>
+  <Style id="f"><LineStyle><color>ff80de4a</color><width>2</width></LineStyle><PolyStyle><color>3380de4a</color></PolyStyle></Style>
+  <Placemark><n>Sector Az${az}</n><styleUrl>#s</styleUrl><Polygon><outerBoundaryIs><LinearRing><coordinates>${lon},${lat},0 ${outer} ${lon},${lat},0</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+  <Placemark><n>Footprint</n><styleUrl>#f</styleUrl><Polygon><outerBoundaryIs><LinearRing><coordinates>${outer} ${inner}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+  <Placemark><n>Site</n><Point><coordinates>${lon},${lat},0</coordinates></Point></Placemark>
+</Document></kml>`;
+  // ── JSZip available: export as .kmz (zipped KML); otherwise export raw .kml ──
+  if(typeof JSZip!=='undefined'){
+    new JSZip().file('doc.kml',kml).generateAsync({type:'blob',compression:'DEFLATE'}).then(b=>{
+      const a=document.createElement('a');a.href=URL.createObjectURL(b);
+      a.download=`antenna_az${az.toFixed(0)}.kmz`;a.click();
+    });
+  }else{
+    const b=new Blob([kml],{type:'text/xml'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(b);
+    a.download=`antenna_az${az.toFixed(0)}.kml`;a.click();  // fallback: plain KML file
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// EXCEL PANEL TOGGLE — collapses/expands the Excel import panel
+// ════════════════════════════════════════════════════════════════════════
+function toggleExcelPanel(){
+  const b=document.getElementById('excel-panel-body');
+  const c=document.getElementById('excel-chevron');
+  b.classList.toggle('open');                          // show/hide body
+  c.classList.toggle('open',b.classList.contains('open'));  // rotate chevron icon
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// SPINNER — full-screen loading overlay shown during API calls
+// ════════════════════════════════════════════════════════════════════════
+function showSpinner(msg){
+  document.getElementById('spinner-text').textContent=msg||'Loading…';  // update message
+  document.getElementById('spinner').style.display='flex';               // show overlay
+}
+function hideSpinner(){
+  document.getElementById('spinner').style.display='none';  // hide overlay
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// INIT — run once when the page DOM is fully loaded
+// ════════════════════════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded',()=>{
+  onParamChange();     // read default sidebar values and compute initial flat-earth geometry
+  initMap();           // create Leaflet map instance with satellite basemap
+  drawSingleSector();  // draw the default single-cell sector on the map
+});
+</script>
+</body>
+</html>
